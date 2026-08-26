@@ -27,6 +27,10 @@ const server = http.createServer(function (req, res) {
     res.writeHead(400);
     return res.end('bad request');
   }
+  if (urlPath === '/healthz') {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('ok');
+  }
   if (urlPath === '/') urlPath = '/index.html';
 
   const filePath = path.normalize(path.join(ROOT, urlPath));
@@ -59,5 +63,5 @@ const server = http.createServer(function (req, res) {
 });
 
 server.listen(PORT, function () {
-  console.log('[hokm] serving on port ' + PORT);
+  console.log('[hokm] serving on port ' + PORT + (process.env.NODE_ENV ? ' (' + process.env.NODE_ENV + ')' : ''));
 });
