@@ -67,6 +67,11 @@
 
     onBackPressed: async function () {
       if (!UI.screenEl || !UI.screenEl.classList.contains('on')) return;
+      // Online screen has its own leave flow (confirm -> seat goes to a bot)
+      if (root.HokmOnline && root.HokmOnline.isActive && root.HokmOnline.isActive()) {
+        const yes = await root.HokmOnline.requestExit();
+        return; // doExit already returned to menu when confirmed
+      }
       const yes = await UI.confirmExit();
       if (yes) this.toMenu();
     },
@@ -114,6 +119,11 @@
           UI.speed = p.fast ? 0.55 : 1;
           Snd.setMuted(!p.sound);
         });
+      });
+      const onlineBtn = scr.querySelector('#btn-online');
+      if (onlineBtn) onlineBtn.addEventListener('click', function () {
+        Snd.play('click');
+        root.HokmOnline.startOnline();
       });
     },
 

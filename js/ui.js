@@ -129,6 +129,7 @@
       };
       btns.appendChild(mk('btn-4p', 'gold', 'چهارنفره', 'با یار، روبه‌روی هم'));
       btns.appendChild(mk('btn-2p', 'emerald', 'دونفره', 'نبرد تک‌به‌تک'));
+      btns.appendChild(mk('btn-online', 'sky', 'آنلاین', 'ساخت اتاق و دعوت دوست'));
       const row = el('div', 'menu-row');
       row.appendChild(mk('btn-rules', 'ghost sm', 'قوانین'));
       row.appendChild(mk('btn-set', 'ghost sm', 'تنظیمات'));
