@@ -10,6 +10,13 @@ const path = require('path');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'hokm-db.json');
 
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout ' + ms + 'ms')), ms)),
+  ]);
+}
+
 const ON_RAILWAY = !!(process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_ENVIRONMENT);
 
 function resolveMode() {
@@ -89,14 +96,20 @@ async function init() {
     return { mode: MODE };
   }
   if (MODE === 'pglite') {
-    const { PGlite } = require('@electric-sql/pglite');
-    const dir = cfg.url.replace(/^pglite:/, '') || path.join(DATA_DIR, 'hokm.pglite');
-    try { fs.mkdirSync(path.dirname(dir), { recursive: true }); } catch (e) { /* ok */ }
-    pglite = new PGlite(dir);
-    await pglite.waitReady;
-    driver = { query: async (s, p) => (await pglite.query(s, p)).rows };
-    await migrate();
-    return { mode: MODE, dir };
+    try {
+      const { PGlite } = require('@electric-sql/pglite');
+      const dir = cfg.url.replace(/^pglite:/, '') || path.join(DATA_DIR, 'hokm.pglite');
+      try { fs.mkdirSync(path.dirname(dir), { recursive: true }); } catch (e) { /* ok */ }
+      pglite = new PGlite(dir);
+      await withTimeout(pglite.waitReady, 8000);
+      driver = { query: async (s, p) => (await pglite.query(s, p)).rows };
+      await withTimeout(migrate(), 8000);
+      return { mode: MODE, dir };
+    } catch (e) {
+      console.error('[store] pglite init failed, falling back to memory:', e && e.message);
+      MODE = 'memory';
+      pglite = null;
+    }
   }
   // memory
   return { mode: 'memory' };

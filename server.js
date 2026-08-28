@@ -151,7 +151,8 @@ async function boot() {
     console.error('[rooms] restore failed:', String(e && e.message ? e.message : e));
   }
 
-  // Only accept real-time connections once persistence is fully loaded.
+  // Accept real-time connections only once persistence is fully loaded, so
+  // restored rooms are present before any client can join them.
   const wss = new WebSocketServer({ server: server, path: '/ws' });
 
   wss.on('connection', function (ws) {
@@ -162,31 +163,31 @@ async function boot() {
     ws.on('pong', function () { ws.isAlive = true; ws.lastSeen = Date.now(); });
 
     ws.on('message', function (data) {
-    let m;
-    try { m = JSON.parse(data.toString()); } catch (e) { return; }
-    handleWs(ws, m);
+      let m;
+      try { m = JSON.parse(data.toString()); } catch (e) { return; }
+      handleWs(ws, m);
+    });
+
+    ws.on('close', function () {
+      if (ws.room) {
+        const r = ws.room;
+        ws.room = null;
+        r.onDisconnect(ws.seat, false);
+      }
+    });
+    ws.on('error', function () {});
   });
 
-  ws.on('close', function () {
-    if (ws.room) {
-      const r = ws.room;
-      ws.room = null;
-      r.onDisconnect(ws.seat, false);
-    }
-  });
-  ws.on('error', function () {});
-});
+  // Keepalive: evict dead sockets so proxies cannot silently strand players.
+  setInterval(function () {
+    wss.clients.forEach(function (ws) {
+      if (ws.isAlive === false) { try { ws.terminate(); } catch (e) {} return; }
+      ws.isAlive = false;
+      try { ws.ping(); } catch (e) {}
+    });
+  }, 25000).unref();
 
-// Keepalive: evict dead sockets so proxies cannot silently strand players.
-setInterval(function () {
-  wss.clients.forEach(function (ws) {
-    if (ws.isAlive === false) { try { ws.terminate(); } catch (e) {} return; }
-    ws.isAlive = false;
-    try { ws.ping(); } catch (e) {}
-  });
-}, 25000).unref();
-
-setInterval(function () { rooms.prune(); }, 600000).unref();
+  setInterval(function () { rooms.prune(); }, 600000).unref();
 
   server.listen(PORT, function () {
     console.log('[hokm] serving on port ' + PORT +
