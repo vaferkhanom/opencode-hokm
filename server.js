@@ -11,7 +11,7 @@ const { createBot } = require('./server/tgbot');
 const ROOT = __dirname;
 const PORT = process.env.PORT || 8080;
 let CFG = {};
-try { CFG = require('./config.production.json'); } catch (e) {}
+try { CFG = require('./server/config.production.json'); } catch (e) {}
 const BOT_TOKEN = process.env.BOT_TOKEN || CFG.botToken || '';
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || CFG.webhookSecret || ('whsec-' + crypto.randomBytes(12).toString('hex'));
 
@@ -109,6 +109,11 @@ const server = http.createServer(function (req, res) {
   }
   if (urlPath === '/') urlPath = '/index.html';
 
+  // Never expose server internals, tests or runtime data over HTTP.
+  if (/^\/(server|tests|data)(\/|$)/.test(urlPath)) {
+    res.writeHead(404);
+    return res.end('not found');
+  }
   const filePath = path.normalize(path.join(ROOT, urlPath));
   if (!filePath.startsWith(ROOT)) {
     res.writeHead(403);
