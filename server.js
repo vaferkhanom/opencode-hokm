@@ -18,6 +18,10 @@ const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || CFG.webhookSecret 
 const rooms = new Rooms();
 rooms.onMatchOver = function (payload) {
   store.recordMatch(payload.seats, payload.winSide).catch(function () {});
+  // Game finished: release each participant's room membership.
+  payload.seats.forEach(function (s) {
+    if (s && s.tgId && !s.isBot) store.clearRoom(s.tgId, payload.code).catch(function () {});
+  });
 };
 
 // ---- Telegram bot (enabled when BOT_TOKEN is set) ----
@@ -122,28 +126,42 @@ const server = http.createServer(function (req, res) {
   sendFile(res, filePath);
 });
 
-server.listen(PORT, function () {
-  console.log('[hokm] serving on port ' + PORT +
-    (process.env.NODE_ENV ? ' (' + process.env.NODE_ENV + ')' : '') +
-    (store.MEMORY ? ' [memory-store]' : ' [postgres]'));
-});
-store.init().then(function (r) {
-  console.log('[store] ' + r.mode);
-}).catch(function (e) {
-  console.error('[store] init failed:', String(e.message || e));
-});
+async function boot() {
+  let r;
+  try {
+    r = await store.init();
+  } catch (e) {
+    console.error('[store] init failed:', String(e && e.message ? e.message : e));
+    r = { mode: 'memory' };
+  }
+  console.log('[store] ' + r.mode + (store.isPersisted ? ' (postgres)' : ' (memory)'));
+  rooms.setPersister(function (serialized) { store.saveRoom(serialized).catch(function () {}); });
+  try {
+    const saved = await store.loadRooms();
+    rooms.loadFrom(saved);
+    for (const room of rooms.map.values()) {
+      if (room.state === 'playing' || room.state === 'handEnd') {
+        // Re-arm timers, and give disconnected humans a grace window to reclaim.
+        room.seats.forEach(function (s, i) { if (s && !s.isBot) room.onDisconnect(i, false); });
+        room.advance();
+      }
+    }
+    console.log('[rooms] restored ' + rooms.map.size + ' room(s)');
+  } catch (e) {
+    console.error('[rooms] restore failed:', String(e && e.message ? e.message : e));
+  }
 
-// ---- Real-time multiplayer over WebSocket ----
-const wss = new WebSocketServer({ server: server, path: '/ws' });
+  // Only accept real-time connections once persistence is fully loaded.
+  const wss = new WebSocketServer({ server: server, path: '/ws' });
 
-wss.on('connection', function (ws) {
-  ws.room = null;
-  ws.seat = -1;
-  ws.isAlive = true;
-  ws.lastSeen = Date.now();
-  ws.on('pong', function () { ws.isAlive = true; ws.lastSeen = Date.now(); });
+  wss.on('connection', function (ws) {
+    ws.room = null;
+    ws.seat = -1;
+    ws.isAlive = true;
+    ws.lastSeen = Date.now();
+    ws.on('pong', function () { ws.isAlive = true; ws.lastSeen = Date.now(); });
 
-  ws.on('message', function (data) {
+    ws.on('message', function (data) {
     let m;
     try { m = JSON.parse(data.toString()); } catch (e) { return; }
     handleWs(ws, m);
@@ -169,6 +187,14 @@ setInterval(function () {
 }, 25000).unref();
 
 setInterval(function () { rooms.prune(); }, 600000).unref();
+
+  server.listen(PORT, function () {
+    console.log('[hokm] serving on port ' + PORT +
+      (process.env.NODE_ENV ? ' (' + process.env.NODE_ENV + ')' : ''));
+  });
+}
+
+boot();
 
 // Identity resolution for an inbound WS action.
 function resolveIdentity(msg) {
@@ -197,6 +223,7 @@ function handleWs(ws, m) {
     markSeat(room, made.seat, idn);
     ws.room = room;
     ws.seat = made.seat;
+    if (idn.verified) store.setRoom(idn.tgUser.id, room.code).catch(function () {});
     safeSend(ws, { type: 'welcome', seat: made.seat, code: room.code, mode: mode, isHost: room.creatorId === idn.playerId, botUsername: bot ? bot.me.username : null });
     room.broadcastState();
     return;
@@ -212,6 +239,7 @@ function handleWs(ws, m) {
     markSeat(room, seat, idn);
     ws.room = room;
     ws.seat = seat;
+    if (idn.verified) store.setRoom(idn.tgUser.id, room.code).catch(function () {});
     safeSend(ws, { type: 'welcome', seat: seat, code: room.code, mode: room.mode, isHost: room.creatorId === idn.playerId, botUsername: bot ? bot.me.username : null });
     room.broadcastState();
     return;

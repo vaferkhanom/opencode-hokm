@@ -104,7 +104,7 @@
       n.on('welcome', function (m) {
         self.code = m.code; self.seat = m.seat; self.isHost = m.isHost;
         if (m.botUsername) root.__TG_BOT = m.botUsername;
-        if (m.isHost) { try { localStorage.setItem('hokm-lastcode', m.code); } catch (e) {} }
+        try { localStorage.setItem('hokm-lastcode', m.code); } catch (e) {}
         self.hideLayer();
       });
       n.on('inviteInfo', function (m) { self.showInviteSheet(m); });
@@ -113,7 +113,10 @@
       n.on('error', function (m) {
         if (/\u067e\u0631 \u0627\u0633\u062a|\u067e\u06cc\u062f\u0627 \u0646\u0634\u062f/.test(m.message || '')) {
           UI.banner(m.message || '\u062e\u0637\u0627', 'bad', 2400);
-          setTimeout(function () { self.doExit(false); }, 900);
+          // Room missing/full: return to the lobby instead of dropping the player.
+          self.code = null;
+          try { localStorage.removeItem('hokm-lastcode'); } catch (e) {}
+          setTimeout(function () { self.renderLobbyShell(); }, 600);
           return;
         }
         UI.banner(m.message || '\u062e\u0637\u0627', 'bad', 2200);
@@ -241,9 +244,16 @@
         if (room && !self._confirmShown) {
           self._confirmShown = true;
           self.showJoinConfirm(room);
-        } else {
-          self.renderLobbyShell();
+          return;
         }
+        // After a reload, jump straight back into the last room if it still exists.
+        let last = null;
+        try { last = localStorage.getItem('hokm-lastcode'); } catch (e) {}
+        if (last && /^[A-Z0-9]{6}$/i.test(last)) {
+          self.joinByCode(last);
+          return;
+        }
+        self.renderLobbyShell();
       });
     },
     create: function (mode) {
@@ -339,7 +349,7 @@
       const scr = el('section', 'screen lobby on');
       scr.innerHTML =
         '<h1 class="lobby-title">\u0628\u0627\u0632\u06cc \u0622\u0646\u0644\u0627\u06cc\u0646</h1>' +
-        '<p class="lobby-sub">\u0627\u062a\u0627\u0642 \u0628\u0633\u0627\u0632 \u06cc\u0627 \u0628\u0627 \u06a9\u062f \u0645\u0644\u062d\u0635 \u0634\u0648</p>' +
+        '<p class="lobby-sub">اتاق بساز یا با کد ملحق شو</p>' +
         '<div class="lobby-actions">' +
         '  <button class="btn gold wide" data-action="create-2p">\u0633\u0627\u062e\u062a \u0628\u0627\u0632\u06cc 2 \u0646\u0641\u0631\u0647</button>' +
         '  <button class="btn gold wide" data-action="create-4p">\u0633\u0627\u062e\u062a \u0628\u0627\u0632\u06cc 4 \u0646\u0641\u0631\u0647</button>' +
@@ -362,7 +372,7 @@
         this._lobbyKey = key;
         const box = this.lobbyEl.querySelector('#lob-room');
         box.innerHTML =
-          '<div class="lobby-room card">' +
+          '<div class="lobby-room">' +
           '  <div class="room-code-head">' +
           '    <span class="lbl">\u06a9\u062f \u0627\u062a\u0627\u0642</span>' +
           '    <div class="code-chip" role="button" data-copy="' + snap.code + '" data-action="copy"><b>' + snap.code + '</b><i>\u2756</i></div>' +

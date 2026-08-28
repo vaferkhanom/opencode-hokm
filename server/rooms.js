@@ -35,6 +35,7 @@ class Room {
     this.code = opts.code;
     this.mode = opts.mode;
     this.clock = opts.clock; // { now, setTimeout, clearTimeout, random }
+    this.rooms = opts.rooms || null;
     this.seats = [];
     for (let i = 0; i < this.mode; i++) this.seats.push(null);
     this.creatorId = null;
@@ -85,6 +86,48 @@ class Room {
     this._lastActive = this.clock.now();
   }
 
+  _psave() {
+    if (this.rooms) this.rooms.scheduleSave(this.code);
+  }
+
+  serialize() {
+    const self = this;
+    return {
+      code: this.code,
+      mode: this.mode,
+      state: this.state,
+      creatorId: this.creatorId,
+      _lastActive: this._lastActive,
+      seats: this.seats.map(function (s) {
+        if (!s) return null;
+        return {
+          playerId: s.playerId, name: s.name, isBot: s.isBot, strikes: s.strikes || 0,
+          side: s.side, tgId: s.tgId || null, humanName: s.humanName || null
+        };
+      }),
+      engine: this.engine ? this.engine.serialize() : null
+    };
+  }
+
+  restore(d, clock) {
+    this.clock = clock || this.clock;
+    this.state = d.state || 'lobby';
+    this.creatorId = d.creatorId || null;
+    this._lastActive = d._lastActive || this.clock.now();
+    this.seats = (d.seats || []).map(function (s) {
+      if (!s) return null;
+      return {
+        playerId: s.playerId, name: s.name, isBot: s.isBot, connected: false, ws: null,
+        strikes: s.strikes || 0, side: s.side, tgId: s.tgId || null, humanName: s.humanName || null
+      };
+    });
+    if (d.engine) {
+      this.engine = new Engine(d.engine.mode, d.engine.rngSeed);
+      this.engine.restore(d.engine);
+    }
+    return this;
+  }
+
   // ----- seat management -----
   seatBot(seat) {
     const s = this.seats[seat];
@@ -110,6 +153,7 @@ class Room {
     this.addLog(name + ' لابی را ترک کرد');
     this.seats[seat] = null;
     this.broadcastState();
+    this._psave();
   }
 
   addPlayer(playerId, name, ws) {
@@ -132,6 +176,7 @@ class Room {
         }
         this.broadcastState();
         if (this.state === 'playing') this.advance();
+        this._psave();
         return i;
       }
     }
@@ -149,6 +194,7 @@ class Room {
         };
         this.broadcastState();
         this.maybeAutoStart();
+        this._psave();
         return i;
       }
     }
@@ -161,6 +207,7 @@ class Room {
     if (!s.connected && !s.ws) return; // already handled (idempotent)
     s.connected = false;
     s.ws = null;
+    this._psave();
 
     if (this.state === 'lobby') {
       // In lobby a leaving player should not hold their seat hostage.
@@ -236,6 +283,7 @@ class Room {
     this.touch();
     this.addLog('بازی شروع شد — ' + this.mode + ' نفره');
     this.broadcastState();
+    this._psave();
     this.advance();
   }
 
@@ -314,6 +362,7 @@ class Room {
 
   advance() {
     this.clearTimers();
+    this._psave();
     const e = this.engine;
     if (!e) return;
     if (this.state === 'matchOver') { this.broadcastState(); return; }
@@ -395,7 +444,7 @@ class Room {
       const seats = this.seats.map(function (s) {
         return { tgId: (s && s.tgId) || null, isBot: !s || s.isBot, side: s ? s.side : -1 };
       });
-      this.onMatchOver({ seats: seats, winSide: this.engine.matchWinner });
+      this.onMatchOver({ code: this.code, seats: seats, winSide: this.engine.matchWinner });
     } catch (e) {}
   }
 
@@ -502,13 +551,37 @@ class Rooms {
   }
   create(mode, playerId, name, ws) {
     const code = this.genCode();
-    const room = new Room({ code: code, mode: mode, clock: this.clock });
+    const room = new Room({ code: code, mode: mode, clock: this.clock, rooms: this });
     room.creatorId = playerId;
     const seat = room.addPlayer(playerId, name, ws);
     this.map.set(code, room);
     return { room: room, seat: seat };
   }
   get(code) { return this.map.get(code); }
+
+  setPersister(fn) {
+    this._persister = fn;
+    this._saveTimers = new Map();
+  }
+  scheduleSave(code) {
+    if (!this._persister || this._saveTimers == null) return;
+    if (this._saveTimers.has(code)) return;
+    const t = this.clock.setTimeout(() => {
+      this._saveTimers.delete(code);
+      const r = this.map.get(code);
+      if (r) { try { this._persister(r.serialize()); } catch (e) { /* best-effort */ } }
+    }, 400);
+    this._saveTimers.set(code, t);
+  }
+  loadFrom(list) {
+    for (const d of (list || [])) {
+      const payload = (d && d.data) ? d.data : d;
+      const room = new Room({ code: d.code, mode: d.mode, clock: this.clock, rooms: this });
+      room.restore(payload, this.clock);
+      this.map.set(d.code, room);
+    }
+    return this.map;
+  }
   prune() {
     const now = this.clock.now();
     for (const [code, room] of this.map) {

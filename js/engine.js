@@ -9,7 +9,8 @@
   function Engine(mode, seed) {
     this.mode = mode;
     this.n = mode;
-    this.rng = Cards.mulberry32(seed != null ? seed : ((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0));
+    this.rngSeed = seed != null ? seed : ((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0);
+    this.rng = Cards.mulberry32(this.rngSeed);
     this.handNo = 0;
     this.scores = [0, 0];
     this.roles = null;
@@ -386,6 +387,50 @@
       partner: this.partnerOf(seat),
       hakem: this.roles ? this.roles.hakem : -1
     };
+  };
+
+  Engine.prototype.serialize = function () {
+    return {
+      mode: this.mode, n: this.n, rngSeed: this.rngSeed, handNo: this.handNo,
+      scores: this.scores.slice(), roles: this.roles, matchOver: this.matchOver, matchWinner: this.matchWinner,
+      hands: this.hands, stock: this.stock, trick: this.trick, tricksWon: this.tricksWon.slice(),
+      trump: this.trump, leader: this.leader, turn: this.turn, phase: this.phase,
+      lastTrickResult: this.lastTrickResult, discardPile: this.discardPile, drawState: this.drawState,
+      pendingRoles: this.pendingRoles, handResult: this.handResult, ceremony: this.ceremony,
+      firstFive: this.firstFive, dealOrder: this.dealOrder, restDeck: this.restDeck,
+      discardNeed: this.discardNeed, playedHistory: this.playedHistory
+    };
+  };
+
+  Engine.prototype.restore = function (d) {
+    this.mode = d.mode; this.n = d.n;
+    this.rngSeed = d.rngSeed != null ? d.rngSeed : 1;
+    this.rng = Cards.mulberry32(this.rngSeed);
+    this.handNo = d.handNo || 0;
+    this.scores = (d.scores || [0, 0]).slice();
+    this.roles = d.roles || null;
+    this.matchOver = !!d.matchOver;
+    this.matchWinner = d.matchWinner != null ? d.matchWinner : -1;
+    this.hands = d.hands || [];
+    this.stock = d.stock || [];
+    this.trick = d.trick || [];
+    this.tricksWon = (d.tricksWon || [0, 0]).slice();
+    this.trump = d.trump != null ? d.trump : null;
+    this.leader = d.leader != null ? d.leader : null;
+    this.turn = d.turn != null ? d.turn : null;
+    this.phase = d.phase || 'idle';
+    this.lastTrickResult = d.lastTrickResult || null;
+    this.discardPile = d.discardPile || [];
+    this.drawState = d.drawState || null;
+    this.pendingRoles = d.pendingRoles || null;
+    this.handResult = d.handResult || null;
+    this.ceremony = d.ceremony || null;
+    this.firstFive = d.firstFive || null;
+    this.dealOrder = d.dealOrder || null;
+    this.restDeck = d.restDeck || null;
+    this.discardNeed = d.discardNeed || null;
+    this.playedHistory = d.playedHistory || [];
+    return this;
   };
 
   root.HokmEngine = Engine;

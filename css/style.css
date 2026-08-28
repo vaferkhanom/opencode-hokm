@@ -780,7 +780,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outl
 .screen.lobby { justify-content: flex-start; padding-top: max(20px, env(safe-area-inset-top)); padding-bottom: calc(28px + env(safe-area-inset-bottom)); }
 .screen.game, .screen.menu { overflow-y: hidden; }
 
-.card { background:#0c1322; border:1px solid #25324a; border-radius:16px; padding:14px; }
+/* generic "card" panel removed to avoid colliding with .card playing cards */
+.tile { background:#0c1322; border:1px solid #25324a; border-radius:16px; padding:14px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing:1px; }
 .gold { color:#e9c46a; }
 .grow { flex:1 1 auto; }
