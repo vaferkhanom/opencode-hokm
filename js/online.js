@@ -13,36 +13,52 @@
     if (html != null) n.innerHTML = html;
     return n;
   }
-  function mySideOf(snap, seat) { return snap.mode === 4 ? (seat % 2) : seat; }
   function otherSeat(snap, seat) { return snap.mode === 4 ? (seat + 1) % 4 : 1 - seat; }
-  function initialOf(name) { return (name || '؟').replace(/\s/g, '').slice(0, 1); }
+  function initialOf(name) { return (name || '?').replace(/\s/g, '').slice(0, 1); }
   function sig(cards) { return (cards || []).map(function (c) { return c.id; }).join(','); }
   function fa(n) { try { return Cards.faNum(n); } catch (e) { return String(n); } }
 
-  const RECONNECT_MAX_TRIES = 60;   // ~2min of retries (> server 30s grace)
-  const RECONNECT_DELAY_MS = 2000;
+  // ---- reliable clipboard that works inside Telegram webviews ----
+  function copyText(text, okMsg) {
+    const done = function () { try { UI.banner(okMsg || '\u06a9\u067e\u06cc \u0634\u062f', 'good', 1300); } catch (e) {} };
+    const fallback = function () {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;top:-200px;left:0;opacity:0';
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, text.length);
+        const okExec = document.execCommand && document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (okExec) done();
+        else UI.banner(text, 'info', 4000);
+      } catch (e) { UI.banner(text, 'info', 4000); }
+    };
+    let handled = false;
+    try {
+      const t = root.Telegram && root.Telegram.WebApp;
+      if (t && !t.initDataUnsafe && t.clipboardErrHandled) handled = true;
+    } catch (e) {}
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, fallback);
+        handled = true;
+      }
+    } catch (e) {}
+    if (!handled) fallback();
+  }
 
   const Online = {
-    net: null,
-    code: null,
-    seat: -1,
-    isHost: false,
-    built: false,
-    awaiting: false,
-    promptKind: null,
-    lobbyEl: null,
-    lastHandSig: null,
-    lastTrickSig: null,
-    _heShown: false,
-    _meShown: false,
-    exiting: false,
-    _tries: 0,
-    _retryTimer: null,
-    layerEl: null,
-    pillEl: null,
-    pillTimer: null,
-    deadlineTs: 0,
-    _hapticWarned: false,
+    net: null, code: null, seat: -1, isHost: false,
+    built: false, awaiting: false, promptKind: null,
+    lobbyEl: null, _lobbyKey: null, _slotSig: '',
+    lastHandSig: null, lastTrickSig: null,
+    _heShown: false, _meShown: false,
+    exiting: false, layerEl: null,
+    pillEl: null, pillTimer: null, deadlineTs: 0, _hapticWarned: false,
+    inviteInfo: null,
 
     playerId: function () {
       try {
@@ -50,6 +66,9 @@
         if (!id) { id = 'u' + Math.random().toString(36).slice(2, 10); localStorage.setItem('hokm-pid', id); }
         return id;
       } catch (e) { return 'u' + Math.random().toString(36).slice(2, 10); }
+    },
+    authData: function () {
+      try { const t = root.Telegram && root.Telegram.WebApp; return (t && t.initData) || ''; } catch (e) { return ''; }
     },
     name: function () {
       try {
@@ -60,11 +79,8 @@
         const n = localStorage.getItem('hokm-name');
         if (n) return n;
       } catch (e) {}
-      return 'تو';
+      return '';
     },
-
-    // Room code from ?room=CODE (web link), tgWebAppStartParam (t.me startapp)
-    // or Telegram initDataUnsafe.start_param — all equivalent invite paths.
     inviteCodeFromUrl: function () {
       let code = null;
       try {
@@ -79,80 +95,74 @@
       }
       return code ? String(code).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6) : null;
     },
-
     isActive: function () { return !!this.net && !this.exiting && (!!this.code || !!this.lobbyEl); },
 
+    // ---------------- networking ----------------
     bindNet: function (n) {
       const self = this;
+      n.onStateChange(function (up) { self.setStatusDot(up); });
       n.on('welcome', function (m) {
         self.code = m.code; self.seat = m.seat; self.isHost = m.isHost;
-        self._tries = 0;
+        if (m.botUsername) root.__TG_BOT = m.botUsername;
         if (m.isHost) { try { localStorage.setItem('hokm-lastcode', m.code); } catch (e) {} }
         self.hideLayer();
       });
+      n.on('inviteInfo', function (m) { self.showInviteSheet(m); });
       n.on('state', function (m) { self.onState(m); });
       n.on('system', function (m) { UI.banner(m.text, m.tone || 'info', 1600); });
-      n.on('error', function (m) { UI.banner(m.message || 'خطا', 'bad', 2200); });
+      n.on('error', function (m) {
+        if (/\u067e\u0631 \u0627\u0633\u062a|\u067e\u06cc\u062f\u0627 \u0646\u0634\u062f/.test(m.message || '')) {
+          UI.banner(m.message || '\u062e\u0637\u0627', 'bad', 2400);
+          setTimeout(function () { self.doExit(false); }, 900);
+          return;
+        }
+        UI.banner(m.message || '\u062e\u0637\u0627', 'bad', 2200);
+      });
       n.on('close', function () { self.onNetClose(); });
       return n;
     },
-
-    ensureNet: function () {
-      if (this.net) return Promise.resolve();
-      this.net = this.bindNet(new root.HokmNet());
-      return this.net.connect();
-    },
-
     onNetClose: function () {
       if (this.exiting || !this.net) return;
-      const inRoom = !!this.code && !this.lobbyEl;
-      if (!inRoom) { this.net = null; return; } // shell dropped silently
-      this.net = null;
-      this.showLayer('اتصال قطع شد — در حال بازگشت به اتاق…');
-      this.tryReconnect();
-    },
-
-    tryReconnect: function () {
-      const self = this;
-      if (this.exiting || this.net) return;
-      this._tries++;
-      if (this._tries > RECONNECT_MAX_TRIES) {
-        this.layerMsg('اتصال برقرار نشد — دوباره تلاش کن');
+      const wasInRoom = !!this.code && !this.lobbyEl;
+      if (!wasInRoom && this.lobbyEl) {
+        // lobby transport dropped: net.js auto-reconnects; buttons work via lazy send
+        this.setStatusDot(false);
         return;
       }
-      const n = new root.HokmNet();
-      this.bindNet(n);
-      n.connect().then(function () {
-        if (self.exiting || self.net) { try { n.ws.close(); } catch (e) {} return; }
-        self.net = n;
-        n.send({ type: 'join', code: self.code, playerId: self.playerId(), name: self.name() });
-      }).catch(function () {
-        self._retryTimer = setTimeout(function () { self._retryTimer = null; self.tryReconnect(); }, RECONNECT_DELAY_MS);
-      });
+      this.showLayer('\u0627\u062a\u0635\u0627\u0644 \u0642\u0637\u0639 \u0634\u062f \u2014 \u062f\u0631 \u062d\u0627\u0644 \u0628\u0627\u0632\u06af\u0634\u062a \u0628\u0647 \u0627\u062a\u0627\u0642\u2026');
     },
-
     showLayer: function (text) {
       const self = this;
       if (!this.layerEl) {
         this.layerEl = el('div', 'reconnect-layer',
           '<div class="reconnect-box"><i class="spin"></i><p class="rc-msg"></p>' +
-          '<button class="btn ghost small" id="rc-cancel">خروج از بازی</button></div>');
+          '<button class="btn ghost small" data-action="exit-hard">\u062e\u0631\u0648\u062c \u0627\u0632 \u0628\u0627\u0632\u06cc</button></div>');
         document.body.appendChild(this.layerEl);
-        this.layerEl.querySelector('#rc-cancel').addEventListener('click', function () {
-          Snd.play('click');
-          self.doExit(true);
-        });
       }
       this.layerMsg(text);
       this.layerEl.classList.add('on');
     },
-    layerMsg: function (text) {
-      if (this.layerEl) this.layerEl.querySelector('.rc-msg').textContent = text;
+    layerMsg: function (text) { if (this.layerEl) this.layerEl.querySelector('.rc-msg').textContent = text; },
+    hideLayer: function () { if (this.layerEl) this.layerEl.classList.remove('on'); },
+    setStatusDot: function (up) {
+      let dot = document.getElementById('net-dot');
+      if (!dot) {
+        dot = el('i', '', '');
+        dot.id = 'net-dot';
+        document.body.appendChild(dot);
+      }
+      dot.classList.toggle('on', !!up);
+      dot.classList.toggle('off', !up);
     },
-    hideLayer: function () {
-      this._tries = 0;
-      if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
-      if (this.layerEl) this.layerEl.classList.remove('on');
+
+    send: function (obj) { if (this.net) this.net.send(obj); else this.ensureNet().then(function () {}); },
+
+    ensureNet: function () {
+      if (this.net) return Promise.resolve();
+      this.net = this.bindNet(new root.HokmNet());
+      return this.net.connect().then(function () {
+        // small delay not needed; queued messages flushed by socket open
+      }).catch(function () {});
     },
 
     // ---------------- turn countdown ----------------
@@ -168,28 +178,57 @@
       const waiting = this.awaiting && this.promptKind != null && this.deadlineTs > 0 && !this.exiting;
       if (!waiting) { this.pillEl.classList.add('hidden'); this._hapticWarned = false; return; }
       const left = Math.max(0, Math.ceil((this.deadlineTs - Date.now()) / 1000));
-      this.pillEl.textContent = '⏱ ' + fa(left) + ' ثانیه';
+      this.pillEl.textContent = '\u23f1 ' + fa(left) + ' \u062b\u0627\u0646\u06cc\u0647';
       const danger = left <= 15;
       this.pillEl.classList.toggle('danger', danger);
       this.pillEl.classList.remove('hidden');
       if (danger && !this._hapticWarned) {
         this._hapticWarned = true;
-        try { UI.banner('عجله کن!', 'warn', 1100); UI.haptic && UI.haptic('warn'); } catch (e) {}
+        try { UI.banner('\u0639\u062c\u0644\u0647 \u06a9\u0646!', 'warn', 1100); UI.haptic && UI.haptic('warn'); } catch (e) {}
       }
     },
 
-    resetRoundView: function () {
-      this.built = false;
-      this.lastHandSig = null;
-      this.lastTrickSig = null;
-      this.awaiting = false;
-      this.promptKind = null;
-      this.deadlineTs = 0;
-      this._heShown = false;
-      this._meShown = false;
-      try { if (UI.screenEl && UI.screenEl.dataset.scr === 'game') UI.destroyGame(); } catch (e) {}
+    // ---------------- sheets ----------------
+    sheetOpen: function (html) {
+      this.sheetClose();
+      const ov = el('div', 'sheet-layer on', el('div', 'sheet', html).outerHTML);
+      document.body.appendChild(ov);
+      this._sheet = ov;
+      return ov.querySelector('.sheet');
+    },
+    sheetClose: function () { if (this._sheet) { this._sheet.remove(); this._sheet = null; } },
+
+    showInviteSheet: function (m) {
+      this.inviteInfo = m;
+      const self = this;
+      const sh = this.sheetOpen(
+        '<h3>\u062f\u0639\u0648\u062a \u062f\u0648\u0633\u062a</h3>' +
+        '<div class="copy-row code-chip" data-copy="' + m.code + '" data-action="copy" role="button">' +
+        '  <b>' + m.code + '</b><span class="tap-hint">\u0628\u0631\u0627\u06cc \u06a9\u067e\u06cc \u0628\u0632\u0646</span></div>' +
+        '<div class="copy-row inv-link mono" data-copy="' + (m.tgUrl || '') + '" data-action="copy">' +
+        '  <span class="lbl">\u0644\u06cc\u0646\u06a9 \u062f\u0639\u0648\u062a (\u062a\u0644\u06af\u0631\u0627\u0645)</span>' +
+        '  <span class="val">t.me/' + String(m.tgUrl || '').split('t.me/')[1] + '</span></div>' +
+        '<div class="row-btns">' +
+        '  <button class="btn gold grow" data-action="share-tg">\u0641\u0631\u0633\u062a\u0627\u062f\u0646 \u062f\u0631 \u0686\u062a</button>' +
+        '  <button class="btn ghost" data-action="close-sheet">\u0628\u0633\u062a\u0646</button></div>');
+      // store for share button
+      this._inviteUrl = m.tgUrl || '';
+      this._inviteText = '\u0628\u06cc\u0627 \u062d\u064f\u06a9\u0645 \u0622\u0646\u0644\u0627\u06cc\u0646! \u06a9\u062f \u0627\u062a\u0627\u0642: ' + m.code;
+      try { Snd.play('click'); } catch (e) {}
     },
 
+    showJoinConfirm: function (code) {
+      const self = this;
+      const sh = this.sheetOpen(
+        '<h3>\u0648\u0631\u0648\u062f \u0628\u0647 \u0644\u0627\u0628\u06cc\u061f</h3>' +
+        '<p class="sub">\u0628\u0627 \u06a9\u062f <b class="mono gold">' + code + '</b> \u0628\u0647 \u0627\u062a\u0627\u0642 \u062f\u0639\u0648\u062a \u0634\u062f\u06cc. \u0645\u0644\u062d\u0642 \u0645\u06cc\u200f\u0634\u0648\u06cc\u061f</p>' +
+        '<div class="row-btns">' +
+        '  <button class="btn ghost" data-action="no-join">\u0646\u0647</button>' +
+        '  <button class="btn emerald" data-action="yes-join" data-code="' + code + '">\u0628\u0644\u0647\u060c \u0645\u0644\u062d\u0642 \u0634\u0648</button></div>');
+      Snd.play('click');
+    },
+
+    // ---------------- lifecycle ----------------
     startOnline: function () {
       const self = this;
       Snd.play('click');
@@ -199,225 +238,226 @@
       UI.showScreen && UI.showScreen('menu');
       this.ensureNet().then(function () {
         const room = self.inviteCodeFromUrl();
-        if (room) {
-          self.net.send({ type: 'join', code: room, playerId: self.playerId(), name: self.name() });
+        if (room && !self._confirmShown) {
+          self._confirmShown = true;
+          self.showJoinConfirm(room);
         } else {
           self.renderLobbyShell();
         }
-      }).catch(function () { UI.banner('اتصال به سرور ممکن نشد', 'bad', 2500); });
+      });
     },
-
     create: function (mode) {
       const self = this;
       this.ensureNet().then(function () {
-        self.net.send({ type: 'create', mode: mode, playerId: self.playerId(), name: self.name() });
+        self.net.send({ type: 'create', mode: mode, playerId: self.playerId(), name: self.name(), initData: self.authData() });
       });
     },
-    join: function (code) {
-      const self = this;
-      this.ensureNet().then(function () {
-        self.net.send({ type: 'join', code: String(code || '').toUpperCase(), playerId: self.playerId(), name: self.name() });
-      });
+    joinByCode: function (code) {
+      this.ensureNet();
+      this.net.send({ type: 'join', code: String(code || '').toUpperCase(), playerId: this.playerId(), name: this.name(), initData: this.authData() });
     },
-    leave: function () {
+    leaveLobby: function () {
       if (this.net) this.net.send({ type: 'leave' });
       if (App) App.toMenu();
       this.teardown(true);
     },
-    // In-game exit: confirm first — server hands the seat to a bot immediately.
     requestExit: function () {
       if (this.exiting) return Promise.resolve(false);
+      if (!this.code || this.stateIsLobby()) { this.leaveLobby(); return Promise.resolve(false); }
       Snd.play('click');
       const self = this;
-      return UI.confirmExit().then(function (yes) {
-        if (yes) self.doExit(true);
-        return yes;
-      });
+      return UI.confirmExit().then(function (yes) { if (yes) self.doExit(true); return yes; });
     },
+    stateIsLobby: function () { return !!(this.lobbyEl); },
     doExit: function (sendLeave) {
       this.exiting = true;
-      if (sendLeave && this.net) this.net.send({ type: 'leave' });
+      if (sendLeave && this.net && this.net.isLive()) this.net.send({ type: 'leave' });
       if (App) App.toMenu();
       this.teardown(true);
+      setTimeout(function () { window.__hokmExitDone = true; }, 0);
     },
-    teardown: function () {
-      if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
-      if (this.net) { try { this.net.ws && this.net.ws.close(); } catch (e) {} }
-      this.net = null;
+    teardown: function (hard) {
+      this.sheetClose();
+      this.hideLayer();
+      if (hard && this.net) this.net.destroy();
+      else if (this.net && this.net.ws) { try { this.net.ws.close(); } catch (e) {} }
+      if (hard) this.net = null;
       this.code = null; this.seat = -1; this.isHost = false;
-      this.built = false; this.lobbyEl = null; this.lastHandSig = null; this.lastTrickSig = null;
+      this.built = false; this.lobbyEl = null; this._lobbyKey = null;
+      this.lastHandSig = null; this.lastTrickSig = null;
       this._heShown = false; this._meShown = false; this.awaiting = false;
       this.promptKind = null; this.deadlineTs = 0;
-      if (this.layerEl) this.layerEl.classList.remove('on');
     },
 
-    // ---------------- state routing ----------------
-    onState: function (snap) {
-      if (snap.state === 'lobby') { this.renderLobby(snap); return; }
-      if (this.lobbyEl) { this.lobbyEl.remove(); this.lobbyEl = null; }
-      if (snap.state === 'matchOver' && !this._meShown) { this.renderGame(snap); return; }
-      this.renderGame(snap);
+    // ---------------- delegated actions ----------------
+    actions: {
+      'create-2p': function () { Online.create(2); },
+      'create-4p': function () { Online.create(4); },
+      'join-input': function (btn) {
+        const inp = document.getElementById('lob-code');
+        const v = inp ? inp.value.trim() : '';
+        if (/^[A-Z0-9]{6}$/i.test(v)) Online.joinByCode(v);
+        else UI.banner('\u06a9\u062f 6 \u0631\u0642\u0645\u06cc/\u062d\u0631\u0641\u06cc \u0628\u0647 \u0644\u0627\u062a\u06cc\u0646', 'warn', 1800);
+      },
+      'back-menu': function () { Online.leaveLobby(); },
+      'start': function () { Online.net.send({ type: 'start' }); },
+      'invite': function () {
+        const code = Online.code;
+        copyText('https://t.me/' + (root.__TG_BOT || 'Echohokmbot') + '?start=room_' + code, '\u0644\u06cc\u0646\u06a9 \u062f\u0639\u0648\u062a \u06a9\u067e\u06cc \u0634\u062f');
+        Online.net.send({ type: 'invite', code: code }); // refresh canonical links server-side
+      },
+      'copy': function (elm) {
+        const txt = elm.getAttribute('data-copy') || elm.textContent.trim();
+        copyText(txt, '\u06a9\u067e\u06cc \u0634\u062f');
+        elm.classList.add('copied');
+        setTimeout(function () { elm.classList.remove('copied'); }, 900);
+      },
+      'close-sheet': function () { Online.sheetClose(); },
+      'yes-join': function (elm) { Online.sheetClose(); Online.joinByCode(elm.getAttribute('data-code')); },
+      'no-join': function () { Online.sheetClose(); Online.renderLobbyShell(); },
+      'exit-hard': function () { Online.doExit(true); },
+      'exit-confirm': function () { Online.requestExit(); }
     },
-
-    // ---------------- lobby ----------------
-    renderLobbyShell: function () {
+    initDelegation: function () {
       const self = this;
+      if (self._delegated) return;
+      self._delegated = true;
+      root.__TG_BOT = (function () { try { return (window.TELEGRAM_BOT_USERNAME) || 'Echohokmbot'; } catch (e) { return 'Echohokmbot'; } })();
+      document.addEventListener('click', function (ev) {
+        let t = ev.target;
+        while (t && t !== document.body) {
+          const act = t.getAttribute && t.getAttribute('data-action');
+          if (act) { ev.preventDefault(); ev.stopPropagation(); const fn = self.actions[act]; if (fn) fn(t, ev); return; }
+          t = t.parentNode;
+        }
+      }, { passive: false });
+    },
+
+    // ---------------- lobby (build once, patch after) ----------------
+    renderLobbyShell: function () {
       UI.clearRoot();
       const scr = el('section', 'screen lobby on');
       scr.innerHTML =
-        '<h1 class="lobby-title">بازی آنلاین</h1>' +
-        '<p class="lobby-sub">اتاق بساز یا با کد ملحق شو</p>' +
+        '<h1 class="lobby-title">\u0628\u0627\u0632\u06cc \u0622\u0646\u0644\u0627\u06cc\u0646</h1>' +
+        '<p class="lobby-sub">\u0627\u062a\u0627\u0642 \u0628\u0633\u0627\u0632 \u06cc\u0627 \u0628\u0627 \u06a9\u062f \u0645\u0644\u062d\u0635 \u0634\u0648</p>' +
         '<div class="lobby-actions">' +
-        '<button class="btn gold wide" id="lob-2p">ساخت بازی ۲ نفره</button>' +
-        '<button class="btn gold wide" id="lob-4p">ساخت بازی ۴ نفره</button>' +
+        '  <button class="btn gold wide" data-action="create-2p">\u0633\u0627\u062e\u062a \u0628\u0627\u0632\u06cc 2 \u0646\u0641\u0631\u0647</button>' +
+        '  <button class="btn gold wide" data-action="create-4p">\u0633\u0627\u062e\u062a \u0628\u0627\u0632\u06cc 4 \u0646\u0641\u0631\u0647</button>' +
         '</div>' +
         '<div class="lobby-join">' +
-        '<input id="lob-code" class="code-in" maxlength="6" placeholder="کد اتاق" />' +
-        '<button class="btn ghost" id="lob-join">ملحق شدن</button>' +
+        '  <input id="lob-code" class="code-in" maxlength="6" placeholder="\u06a9\u062f \u0627\u062a\u0627\u0642" autocomplete="off" autocapitalize="characters" />' +
+        '  <button class="btn emerald" data-action="join-input">\u0645\u0644\u062d\u0635</button>' +
         '</div>' +
-        '<button class="btn ghost wide" id="lob-back">بازگشت به منو</button>';
+        '<div id="lob-room"></div>' +
+        '<button class="btn ghost wide" data-action="back-menu">\u0628\u0627\u0632\u06af\u0634\u062a \u0628\u0647 \u0645\u0646\u0648</button>';
       UI.root.appendChild(scr);
       UI.screenEl = scr;
-      scr.querySelector('#lob-2p').addEventListener('click', function () { self.create(2); });
-      scr.querySelector('#lob-4p').addEventListener('click', function () { self.create(4); });
-      scr.querySelector('#lob-join').addEventListener('click', function () {
-        self.join(scr.querySelector('#lob-code').value.trim());
-      });
-      scr.querySelector('#lob-back').addEventListener('click', function () { self.leave(); });
       this.lobbyEl = scr;
     },
 
-    renderLobby: function (snap) {
-      if (!this.lobbyEl || !this.lobbyEl.querySelector('#lob-room')) {
-        this.renderLobbyShell();
-        const scr = this.lobbyEl;
-        const box = el('div', 'lobby-room', '');
-        box.id = 'lob-room';
-        scr.insertBefore(box, scr.querySelector('.lobby-join'));
+    onLobbyState: function (snap) {
+      const key = snap.code + ':' + snap.mode;
+      if (!this.lobbyEl) this.renderLobbyShell();
+      if (this._lobbyKey !== key) {
+        this._lobbyKey = key;
+        const box = this.lobbyEl.querySelector('#lob-room');
+        box.innerHTML =
+          '<div class="lobby-room card">' +
+          '  <div class="room-code-head">' +
+          '    <span class="lbl">\u06a9\u062f \u0627\u062a\u0627\u0642</span>' +
+          '    <div class="code-chip" role="button" data-copy="' + snap.code + '" data-action="copy"><b>' + snap.code + '</b><i>\u2756</i></div>' +
+          '    <span class="rc-hint">\u0628\u0632\u0646 \u062a\u0627 \u06a9\u067e\u06cc \u0634\u0647</span>' +
+          '  </div>' +
+          '  <div class="share-row">' +
+          '    <button class="btn gold grow" data-action="invite">\u062f\u0639\u0648\u062a \u062f\u0648\u0633\u062a</button>' +
+          '    <button class="btn ghost grow" data-action="copy" data-copy="' + location.origin + location.pathname + '?room=' + snap.code + '">\u06a9\u067e\u06cc \u0644\u06cc\u0646\u06a9 \u0648\u0628</button>' +
+          '  </div>' +
+          '  <div class="slots" id="lob-slots"></div>' +
+          '  <div id="lob-cta"></div>' +
+          '</div>';
+        this._slotSig = '';
       }
-      const box = this.lobbyEl.querySelector('#lob-room');
-      const link = location.origin + location.pathname + '?room=' + snap.code;
-      let slots = '';
-      snap.seats.forEach(function (s) {
-        if (s.empty) slots += '<div class="slot empty">صندلی خالی</div>';
-        else slots += '<div class="slot' + (s.isBot ? ' bot' : '') + (s.connected ? '' : ' off') + '">' + s.name + (s.isBot ? '' : (s.connected ? '' : ' (قطع)')) + '</div>';
+      // slots patch (only when changed)
+      let sigStr = '', html = '';
+      snap.seats.forEach(function (s, i) {
+        if (s.empty) { sigStr += 'e'; html += '<div class="slot empty">\u0635\u0646\u062f\u0644\u06cc \u062e\u0627\u0644\u06cc</div>'; }
+        else {
+          sigStr += s.isBot ? 'B' : (s.connected ? 'H' : 'h');
+          html += '<div class="slot' + (s.isBot ? ' bot' : '') + (s.connected ? '' : ' off') + '">' +
+            s.name + (s.isYou ? ' (\u0634\u0645\u0627)' : '') + '</div>';
+        }
       });
-      box.innerHTML =
-        '<div class="room-code"><span>کد اتاق</span><b>' + snap.code + '</b><span class="rc-hint">این کد یا لینک را برای دوستت بفرست</span></div>' +
-        '<div class="share-row">' +
-        '<button class="btn ghost small grow" id="lob-copy">کپی لینک دعوت</button>' +
-        '<button class="btn ghost small grow" id="lob-share">دعوت در تلگرام</button>' +
-        '</div>' +
-        '<div class="slots">' + slots + '</div>';
-      const self = this;
-      const copy = box.querySelector('#lob-copy');
-      if (copy) copy.addEventListener('click', function () {
-        const done = function () { UI.banner('لینک دعوت کپی شد', 'good', 1400); };
-        const fail = function () { UI.banner(link, 'info', 3000); };
-        try {
-          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done, fail);
-          else fail();
-        } catch (e) { fail(); }
-      });
-      const share = box.querySelector('#lob-share');
-      if (share) share.addEventListener('click', function () {
-        const text = 'بیا حُکم آنلاین بازی کنیم! کد اتاق: ' + snap.code;
-        const tgUrl = 'https://t.me/share/url?url=' + encodeURIComponent(link) + '&text=' + encodeURIComponent(text);
-        try {
-          const t = root.Telegram && root.Telegram.WebApp;
-          if (t && t.openTelegramLink) { t.openTelegramLink(tgUrl); return; }
-        } catch (e) {}
-        if (navigator.share) { navigator.share({ title: 'حُکم آنلاین', text: text, url: link }).catch(function () {}); return; }
-        try { root.open(tgUrl, '_blank'); } catch (e) { UI.banner(link, 'info', 3000); }
-      });
-      const startBtn = this.lobbyEl.querySelector('#lob-start');
-      if (snap.seats.every(function (s) { return !s.empty; }) && !startBtn) {
-        const b = el('button', 'btn gold wide', 'شروع بازی', '');
-        b.id = 'lob-start';
-        b.addEventListener('click', function () { self.net.send({ type: 'start' }); });
-        this.lobbyEl.insertBefore(b, this.lobbyEl.querySelector('#lob-back'));
+      if (sigStr !== this._slotSig) {
+        this._slotSig = sigStr;
+        const slots = this.lobbyEl.querySelector('#lob-slots');
+        if (slots) slots.innerHTML = html;
       }
-      if (!snap.seats.every(function (s) { return !s.empty; })) {
-        // Host may start early; empty seats get bots.
-        if (this.isHost && !this.lobbyEl.querySelector('#lob-start-bots')) {
-          const w = el('button', 'btn emerald wide', 'شروع با ربات‌ها', '');
-          w.id = 'lob-start-bots';
-          w.addEventListener('click', function () { self.net.send({ type: 'start' }); });
-          this.lobbyEl.insertBefore(w, this.lobbyEl.querySelector('#lob-back'));
-        }
-        const note = this.lobbyEl.querySelector('#lob-wait');
-        if (!note) {
-          const n = el('div', 'lobby-wait', 'در انتظار بازیکنان… لینک یا کد بالا را بفرست');
-          n.id = 'lob-wait';
-          this.lobbyEl.insertBefore(n, this.lobbyEl.querySelector('#lob-back'));
-        }
-      } else {
-        const waitNote = this.lobbyEl.querySelector('#lob-wait');
-        if (waitNote) waitNote.remove();
-        const sb = this.lobbyEl.querySelector('#lob-start-bots');
-        if (sb) sb.remove();
+      // CTA area (wait note / start button) — patched wholesale, safe: not during taps mid-flight? acceptable, guarded by change-check below
+      const full = snap.seats.every(function (s) { return !s.empty; });
+      let ctaSig = 'w';
+      if (full) ctaSig = 'start';
+      else ctaSig = 'bots' + (this.isHost ? '1' : '0') + 'wait';
+      const cta = this.lobbyEl.querySelector('#lob-cta');
+      if (cta && cta.dataset.sig !== ctaSig) {
+        cta.dataset.sig = ctaSig;
+        if (full) cta.innerHTML = '<button class="btn gold wide" data-action="start">\u0634\u0631\u0648\u0639 \u0628\u0627\u0632\u06cc</button>';
+        else cta.innerHTML =
+          (this.isHost ? '<button class="btn emerald wide" data-action="start">\u0634\u0631\u0648\u0639 \u0628\u0627 \u0631\u0628\u0627\u062a\u200f\u0647\u0627</button>' : '') +
+          '<div class="lobby-wait">\u062f\u0631 \u0627\u0646\u062a\u0638\u0627\u0631 \u0628\u0627\u0632\u06cc\u06a9\u0646\u2026 \u0644\u06cc\u0646\u06a9 \u062f\u0639\u0648\u062a \u0631\u0627 \u0628\u0641\u0631\u0633\u062a</div>';
       }
     },
 
     // ---------------- game ----------------
-    renderGame: function (snap) {
+    onState: function (snap) {
+      if (snap.state === 'lobby') { this.onLobbyState(snap); return; }
+      if (this.lobbyEl) { this.lobbyEl.remove(); this.lobbyEl = null; this._lobbyKey = null; this.sheetClose(); }
       if (!this.built) this.buildGame(snap);
       this.applyCommon(snap);
       this.renderTrick(snap);
       this.renderHandSafe(snap);
       this.handlePrompt(snap);
 
-      if (snap.state === 'handEnd' && !this._heShown) {
+      if (snap.state === 'handEnd' && !this._heShown && snap.handResult) {
         this._heShown = true;
-        const self = this;
         UI.handEndOverlay(snap.handResult);
       }
       if (snap.state === 'playing' && this._heShown) { UI.closeModal && UI.closeModal(); this._heShown = false; }
       if (snap.state === 'matchOver' && !this._meShown) {
         this._meShown = true;
         const self = this;
-        UI.matchEndOverlay(snap.handResult).then(function (action) {
+        UI.matchEndOverlay(snap.handResult || {}).then(function (action) {
           if (action === 'again') self.net.send({ type: 'start' });
           else self.doExit(true);
         });
       }
     },
-
     buildGame: function (snap) {
-      const names = snap.seats.map(function (s) {
-        return { name: s.name, initial: initialOf(s.name) };
-      });
+      const names = snap.seats.map(function (s) { return { name: s.name, initial: initialOf(s.name) }; });
       UI.buildGame({ mode: snap.mode, names: names, usSide: snap.seats[snap.you].side });
       UI.setTarget(snap.target);
       const scr = UI.screenEl;
-      const self = this;
-      scr.querySelector('#g-exit').addEventListener('click', function () { self.requestExit(); });
-      scr.querySelector('#g-help').addEventListener('click', function () { UI.rulesModal(); });
-      // pill names
+      scr.querySelector('#g-exit').setAttribute('data-action', 'exit-confirm');
+      scr.querySelector('#g-exit').removeAttribute('id');
+      const help = scr.querySelector('#g-help');
+      if (help) help.addEventListener('click', function () { UI.rulesModal(); });
       const usName = snap.seats[snap.you].name;
       const themName = snap.seats[otherSeat(snap, snap.you)].name;
       const usEl = document.getElementById('pl-us-name'); if (usEl) usEl.textContent = usName;
       const themEl = document.getElementById('pl-them-name'); if (themEl) themEl.textContent = themName;
       this.built = true;
     },
-
     applyCommon: function (snap) {
       snap.seats.forEach(function (s, i) {
         if (s.empty) return;
         UI.setSeatName(i, s.name, initialOf(s.name));
         const node = UI.seatNode(i);
         if (node) {
-          node.classList.toggle('off', !s.connected);
+          node.classList.toggle('off', !!s.connected ? false : true);
           node.classList.toggle('is-bot', !!s.isBot);
           let chip = node.querySelector('.strike-chip');
           if (s.strikes > 0) {
-            if (!chip) {
-              chip = el('span', 'strike-chip');
-              const holder = node.querySelector('.badges') || node;
-              holder.appendChild(chip);
-            }
-            chip.title = 'سه بار تأخیر = ربات تا پایان بازی';
-            chip.innerHTML = '⚠ ' + fa(s.strikes);
+            if (!chip) { chip = el('span', 'strike-chip'); const h = node.querySelector('.badges') || node; h.appendChild(chip); }
+            chip.innerHTML = '\u26a0 ' + fa(s.strikes);
           } else if (chip) chip.remove();
         }
       });
@@ -426,11 +466,9 @@
       UI.setHandNo(snap.handNo);
       UI.setTrumpChip(snap.trump);
       if (snap.turn != null && snap.turn >= 0) UI.setTurn(snap.turn);
-      // countdown anchor for our own pending decisions
       if (snap.yourTurn && snap.turnMsLeft > 0) this.deadlineTs = Date.now() + snap.turnMsLeft;
       else if (!snap.yourTurn) this.deadlineTs = 0;
     },
-
     renderTrick: function (snap) {
       const cards = (snap.lastTrick && (!snap.trick || snap.trick.length === 0)) ? snap.lastTrick : (snap.trick || []);
       const s = sig(cards.map(function (c) { return c.seat + ':' + c.card.id; }));
@@ -442,7 +480,6 @@
         try { UI.highlightWinner(snap.lastWinner, snap.lastTrick[snap.lastTrick.length - 1].card.id); } catch (e) {}
       }
     },
-
     renderHandSafe: function (snap) {
       if (!snap.hand) return;
       const s = sig(snap.hand) + '|' + (this.awaiting && this.promptKind === 'play');
@@ -451,13 +488,11 @@
       if (this.awaiting && this.promptKind === 'play') return;
       UI.renderHand(snap.hand, [], false, null);
     },
-
     handlePrompt: function (snap) {
       if (!snap.yourTurn) { this.awaiting = false; this.promptKind = null; return; }
       const self = this;
       const p = snap.prompt;
       if (this.awaiting) return;
-
       if (p === 'play') {
         this.awaiting = true; this.promptKind = 'play';
         UI.renderHand(snap.hand, snap.legal, true, function (id) {
@@ -470,25 +505,22 @@
         this.awaiting = true; this.promptKind = 'trump';
         const rec = AI.chooseTrump(snap.trumpFive);
         UI.trumpPicker(snap.trumpFive, rec).then(function (suit) {
-          self.net.send({ type: 'trump', suit: suit });
-          self.awaiting = false; self.promptKind = null;
+          self.net.send({ type: 'trump', suit: suit }); self.awaiting = false; self.promptKind = null;
         }).catch(function () { self.awaiting = false; self.promptKind = null; });
         return;
       }
       if (p === 'discard') {
         this.awaiting = true; this.promptKind = 'discard';
         UI.discardPrompt(snap.discardCount).then(function (ids) {
-          self.net.send({ type: 'discard', ids: ids });
-          self.awaiting = false; self.promptKind = null;
+          self.net.send({ type: 'discard', ids: ids }); self.awaiting = false; self.promptKind = null;
         }).catch(function () { self.awaiting = false; self.promptKind = null; });
         return;
       }
       if (p === 'draw') {
         this.awaiting = true; this.promptKind = 'draw';
-        const ctx = { stock: '—', myHand: snap.hand ? snap.hand.length : 0, need: snap.hand ? (13 - snap.hand.length) : 0 };
+        const ctx = { stock: '\u2014', myHand: snap.hand ? snap.hand.length : 0, need: snap.hand ? (13 - snap.hand.length) : 0 };
         UI.drawChoice(snap.drawCard, ctx).then(function (keep) {
-          self.net.send({ type: 'draw', keep: !!keep });
-          self.awaiting = false; self.promptKind = null;
+          self.net.send({ type: 'draw', keep: !!keep }); self.awaiting = false; self.promptKind = null;
         }).catch(function () { self.awaiting = false; self.promptKind = null; });
         return;
       }
@@ -497,4 +529,8 @@
   };
 
   root.HokmOnline = Online;
+  if (typeof document !== 'undefined') {
+    const boot = function () { Online.initDelegation(); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+  }
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1,13 +1,35 @@
 const http = require('http');
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 const { Rooms } = require('./server/rooms');
+const store = require('./server/store');
+const { validateInitData } = require('./server/auth');
+const { createBot } = require('./server/tgbot');
 
 const ROOT = __dirname;
 const PORT = process.env.PORT || 8080;
+let CFG = {};
+try { CFG = require('./config.production.json'); } catch (e) {}
+const BOT_TOKEN = process.env.BOT_TOKEN || CFG.botToken || '';
+const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || CFG.webhookSecret || ('whsec-' + crypto.randomBytes(12).toString('hex'));
 
 const rooms = new Rooms();
+rooms.onMatchOver = function (payload) {
+  store.recordMatch(payload.seats, payload.winSide).catch(function () {});
+};
+
+// ---- Telegram bot (enabled when BOT_TOKEN is set) ----
+let bot = null;
+if (BOT_TOKEN) {
+  bot = createBot({ token: BOT_TOKEN, rooms, store, webhookSecret: WEBHOOK_SECRET, appUsername: process.env.TELEGRAM_BOT_USERNAME || CFG.botUsername });
+  bot.boot().then(function (me) {
+    console.log('[tg] bot @' + me.username + ' ready');
+  }).catch(function () {
+    console.log('[tg] getMe failed (offline?); using fallback username');
+  });
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -23,6 +45,38 @@ const MIME = {
   '.txt': 'text/plain; charset=utf-8'
 };
 
+function sendFile(res, filePath) {
+  fs.readFile(filePath, function (err, data) {
+    if (err) return sendIndex(res);
+    const ext = path.extname(filePath).toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer'
+    });
+    res.end(data);
+  });
+}
+function sendIndex(res) {
+  fs.readFile(path.join(ROOT, 'index.html'), function (err2, index) {
+    if (err2) { res.writeHead(404); res.end('not found'); return; }
+    res.writeHead(200, { 'Content-Type': MIME['.html'] });
+    res.end(index);
+  });
+}
+function readBody(req, limit, cb) {
+  let size = 0;
+  const chunks = [];
+  req.on('data', function (c) {
+    size += c.length;
+    if (size > limit) { req.destroy(); cb(null); return; }
+    chunks.push(c);
+  });
+  req.on('end', function () { cb(Buffer.concat(chunks)); });
+  req.on('error', function () { cb(null); });
+}
+
 const server = http.createServer(function (req, res) {
   let urlPath;
   try {
@@ -35,6 +89,24 @@ const server = http.createServer(function (req, res) {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('ok');
   }
+  // Telegram webhook
+  if (bot && urlPath === '/tg/webhook') {
+    if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
+    if ((req.headers['x-telegram-bot-api-secret-token'] || '') !== WEBHOOK_SECRET) {
+      res.writeHead(401);
+      return res.end();
+    }
+    readBody(req, 1048576, function (buf) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+      if (!buf) return;
+      try {
+        const update = JSON.parse(buf.toString('utf8'));
+        bot.handleUpdate(update);
+      } catch (e) {}
+    });
+    return;
+  }
   if (urlPath === '/') urlPath = '/index.html';
 
   const filePath = path.normalize(path.join(ROOT, urlPath));
@@ -42,32 +114,18 @@ const server = http.createServer(function (req, res) {
     res.writeHead(403);
     return res.end('forbidden');
   }
-
-  fs.readFile(filePath, function (err, data) {
-    if (err) {
-      fs.readFile(path.join(ROOT, 'index.html'), function (err2, index) {
-        if (err2) {
-          res.writeHead(404);
-          return res.end('not found');
-        }
-        res.writeHead(200, { 'Content-Type': MIME['.html'] });
-        res.end(index);
-      });
-      return;
-    }
-    const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, {
-      'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600',
-      'X-Content-Type-Options': 'nosniff',
-      'Referrer-Policy': 'no-referrer'
-    });
-    res.end(data);
-  });
+  sendFile(res, filePath);
 });
 
 server.listen(PORT, function () {
-  console.log('[hokm] serving on port ' + PORT + (process.env.NODE_ENV ? ' (' + process.env.NODE_ENV + ')' : ''));
+  console.log('[hokm] serving on port ' + PORT +
+    (process.env.NODE_ENV ? ' (' + process.env.NODE_ENV + ')' : '') +
+    (store.MEMORY ? ' [memory-store]' : ' [postgres]'));
+});
+store.init().then(function (r) {
+  console.log('[store] ' + r.mode);
+}).catch(function (e) {
+  console.error('[store] init failed:', String(e.message || e));
 });
 
 // ---- Real-time multiplayer over WebSocket ----
@@ -76,6 +134,9 @@ const wss = new WebSocketServer({ server: server, path: '/ws' });
 wss.on('connection', function (ws) {
   ws.room = null;
   ws.seat = -1;
+  ws.isAlive = true;
+  ws.lastSeen = Date.now();
+  ws.on('pong', function () { ws.isAlive = true; ws.lastSeen = Date.now(); });
 
   ws.on('message', function (data) {
     let m;
@@ -93,34 +154,74 @@ wss.on('connection', function (ws) {
   ws.on('error', function () {});
 });
 
+// Keepalive: evict dead sockets so proxies cannot silently strand players.
+setInterval(function () {
+  wss.clients.forEach(function (ws) {
+    if (ws.isAlive === false) { try { ws.terminate(); } catch (e) {} return; }
+    ws.isAlive = false;
+    try { ws.ping(); } catch (e) {}
+  });
+}, 25000).unref();
+
+setInterval(function () { rooms.prune(); }, 600000).unref();
+
+// Identity resolution for an inbound WS action.
+function resolveIdentity(msg) {
+  const user = validateInitData(msg.initData || '', BOT_TOKEN);
+  if (user) {
+    const name = String(user.first_name || '').trim().split(/\s+/)[0] || '\u0628\u0627\u0632\u06cc\u06a9\u0646';
+    return { playerId: 'tg:' + user.id, name: name.slice(0, 24), tgUser: user, verified: true };
+  }
+  const pid = String(msg.playerId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 16) || ('anon' + crypto.randomBytes(3).toString('hex'));
+  const nm = String(msg.name || '').replace(/[<>]/g, '').trim().slice(0, 24) || '\u0645\u0647\u0645\u0627\u0646';
+  return { playerId: pid, name: nm, tgUser: null, verified: false };
+}
+
 function handleWs(ws, m) {
   if (!m || typeof m.type !== 'string') return;
+  ws.lastSeen = Date.now();
+
+  if (m.type === 'ping') { safeSend(ws, { type: 'pong' }); return; }
 
   if (m.type === 'create') {
+    const idn = resolveIdentity(m);
+    if (idn.verified && idn.tgUser) store.upsertUser(idn.tgUser).catch(function () {});
     const mode = (m.mode === 4 || m.mode === 2) ? m.mode : 2;
-    const { room, seat } = rooms.create(mode, m.playerId, m.name, ws);
+    const made = rooms.create(mode, idn.playerId, idn.name, ws);
+    const room = made.room;
+    markSeat(room, made.seat, idn);
     ws.room = room;
-    ws.seat = seat;
-    room.send(seat, {
-      type: 'welcome', seat: seat, code: room.code, mode: mode,
-      isHost: room.creatorId === m.playerId
-    });
+    ws.seat = made.seat;
+    safeSend(ws, { type: 'welcome', seat: made.seat, code: room.code, mode: mode, isHost: room.creatorId === idn.playerId, botUsername: bot ? bot.me.username : null });
     room.broadcastState();
     return;
   }
 
   if (m.type === 'join') {
+    const idn = resolveIdentity(m);
+    if (idn.verified && idn.tgUser) store.upsertUser(idn.tgUser).catch(function () {});
     const room = rooms.get(String(m.code || '').toUpperCase());
-    if (!room) { ws.send(JSON.stringify({ type: 'error', message: 'اتاق پیدا نشد' })); return; }
-    const seat = room.addPlayer(m.playerId, m.name, ws);
-    if (seat < 0) { ws.send(JSON.stringify({ type: 'error', message: 'اتاق پر است' })); return; }
+    if (!room) { safeSend(ws, { type: 'error', message: '\u0627\u062a\u0627\u0642 \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f' }); return; }
+    const seat = room.addPlayer(idn.playerId, idn.name, ws);
+    if (seat < 0) { safeSend(ws, { type: 'error', message: '\u0627\u062a\u0627\u0642 \u067e\u0631 \u0627\u0633\u062a' }); return; }
+    markSeat(room, seat, idn);
     ws.room = room;
     ws.seat = seat;
-    room.send(seat, {
-      type: 'welcome', seat: seat, code: room.code, mode: room.mode,
-      isHost: room.creatorId === m.playerId
-    });
+    safeSend(ws, { type: 'welcome', seat: seat, code: room.code, mode: room.mode, isHost: room.creatorId === idn.playerId, botUsername: bot ? bot.me.username : null });
     room.broadcastState();
+    return;
+  }
+
+  if (m.type === 'invite') {
+    if (!ws.room) return;
+    const code = ws.room.code;
+    const username = bot ? bot.me.username : (process.env.TELEGRAM_BOT_USERNAME || null);
+    safeSend(ws, {
+      type: 'inviteInfo',
+      code: code,
+      tgUrl: username ? ('https://t.me/' + username + '?start=room_' + code) : null,
+      webUrl: (process.env.APP_PUBLIC_URL || CFG.appPublicUrl || '') + '/?room=' + code
+    });
     return;
   }
 
@@ -131,12 +232,12 @@ function handleWs(ws, m) {
   if (m.type === 'rename') {
     if (ws.room) {
       const s = ws.room.seats[ws.seat];
-      if (s) { s.name = m.name || s.name; ws.room.broadcastState(); }
+      // Verified Telegram users keep their Telegram names.
+      if (s && !s.tgId && m.name) { s.name = String(m.name).replace(/[<>]/g, '').slice(0, 24); ws.room.broadcastState(); }
     }
     return;
   }
   if (m.type === 'leave') {
-    // explicit quit: room releases/replaces the seat immediately
     if (ws.room) {
       const r = ws.room;
       ws.room = null;
@@ -150,4 +251,16 @@ function handleWs(ws, m) {
   }
 }
 
-setInterval(function () { rooms.prune(); }, 600000).unref();
+function markSeat(room, seat, idn) {
+  const s = room.seats[seat];
+  if (!s) return;
+  s.name = idn.name;
+  if (idn.verified) {
+    s.tgId = Number(idn.tgUser.id);
+    s.playerId = idn.playerId;
+  }
+}
+
+function safeSend(ws, msg) {
+  try { ws.send(JSON.stringify(msg)); } catch (e) {}
+}

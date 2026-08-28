@@ -1,0 +1,7 @@
+{
+  "_comment": "Private-repo runtime config. ENV VARS TAKE PRECEDENCE: BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_BOT_USERNAME, APP_PUBLIC_URL, DATABASE_URL. Rotate these tokens if ever exposed.",
+  "botToken": "8985362006:AAHOMwC7jymfTJxnsoBWwKQslbMVbh1szC8",
+  "webhookSecret": "whsec_7f4a9c2e81b34d06a5f0c8e2d91b47aa",
+  "botUsername": "Echohokmbot",
+  "appPublicUrl": "https://opencode-hokm-production.up.railway.app"
+}

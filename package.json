@@ -6,13 +6,14 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/run-tests.js && node tests/smoke-ui.test.js && node tests/room.test.js"
+    "test": "node tests/run-tests.js && node tests/smoke-ui.test.js && node tests/room.test.js && node tests/tg.test.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "ws": "^8.21.3"
+    "ws": "^8.21.3",
+    "pg": "^8.12.0"
   },
   "devDependencies": {
     "jsdom": "^24.1.3"

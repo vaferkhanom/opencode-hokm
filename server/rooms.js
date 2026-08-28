@@ -328,7 +328,12 @@ class Room {
       this.state = 'handEnd';
       this.broadcastState();
       this.clock.setTimeout(() => {
-        if (this.engine.matchOver) { this.state = 'matchOver'; this.broadcastState(); return; }
+        if (this.engine.matchOver) {
+          this.fireMatchOver();
+          this.state = 'matchOver';
+          this.broadcastState();
+          return;
+        }
         this.engine.proceedAfterHand();
         this.engine.beginHand();
         this.state = 'playing';
@@ -382,6 +387,16 @@ class Room {
       if (s.strikes >= STRIKES_MAX) this.botReplace(seat, 'سه بار تاخیر');
     }
     this.advance();
+  }
+
+  fireMatchOver() {
+    if (!this.onMatchOver) return;
+    try {
+      const seats = this.seats.map(function (s) {
+        return { tgId: (s && s.tgId) || null, isBot: !s || s.isBot, side: s ? s.side : -1 };
+      });
+      this.onMatchOver({ seats: seats, winSide: this.engine.matchWinner });
+    } catch (e) {}
   }
 
   forceBotAct(seat) {
