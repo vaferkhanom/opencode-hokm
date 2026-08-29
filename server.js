@@ -30,6 +30,14 @@ if (BOT_TOKEN) {
   bot = createBot({ token: BOT_TOKEN, rooms, store, webhookSecret: WEBHOOK_SECRET, appUsername: process.env.TELEGRAM_BOT_USERNAME || CFG.botUsername });
   bot.boot().then(function (me) {
     console.log('[tg] bot @' + me.username + ' ready');
+    const appUrl = process.env.APP_PUBLIC_URL || CFG.appPublicUrl || '';
+    if (appUrl) {
+      bot.setWebhook(appUrl + '/tg/webhook').then(function (r) {
+        console.log('[tg] webhook set: ' + (r ? 'ok' : 'failed'));
+      }).catch(function () { console.log('[tg] webhook set failed'); });
+    } else {
+      console.log('[tg] APP_PUBLIC_URL not set — webhook not registered');
+    }
   }).catch(function () {
     console.log('[tg] getMe failed (offline?); using fallback username');
   });
@@ -221,6 +229,10 @@ function handleWs(ws, m) {
     const mode = (m.mode === 4 || m.mode === 2) ? m.mode : 2;
     const made = rooms.create(mode, idn.playerId, idn.name, ws);
     const room = made.room;
+    // lobby options
+    const th = Number(m.targetHands);
+    if (th === 3 || th === 5 || th === 7) room.targetHands = th;
+    if (m.teamAssignMode === 'random' || m.teamAssignMode === 'manual') room.teamAssignMode = m.teamAssignMode;
     markSeat(room, made.seat, idn);
     ws.room = room;
     ws.seat = made.seat;
@@ -253,7 +265,7 @@ function handleWs(ws, m) {
     safeSend(ws, {
       type: 'inviteInfo',
       code: code,
-      tgUrl: username ? ('https://t.me/' + username + '?start=room_' + code) : null,
+      tgUrl: username ? ('https://t.me/' + username + '?startapp=' + code) : null,
       webUrl: (process.env.APP_PUBLIC_URL || CFG.appPublicUrl || '') + '/?room=' + code
     });
     return;
@@ -268,6 +280,28 @@ function handleWs(ws, m) {
       const s = ws.room.seats[ws.seat];
       // Verified Telegram users keep their Telegram names.
       if (s && !s.tgId && m.name) { s.name = String(m.name).replace(/[<>]/g, '').slice(0, 24); ws.room.broadcastState(); }
+    }
+    return;
+  }
+  if (m.type === 'setTeamAssign') {
+    const idn2 = resolveIdentity(m);
+    if (ws.room && ws.room.creatorId === idn2.playerId && ws.room.state === 'lobby') {
+      const mode = m.mode;
+      if (mode === 'random' || mode === 'manual') {
+        ws.room.teamAssignMode = mode;
+        ws.room.broadcastState();
+      }
+    }
+    return;
+  }
+  if (m.type === 'setTargetHands') {
+    const idn3 = resolveIdentity(m);
+    if (ws.room && ws.room.creatorId === idn3.playerId && ws.room.state === 'lobby') {
+      const th = Number(m.targetHands);
+      if (th === 3 || th === 5 || th === 7) {
+        ws.room.targetHands = th;
+        ws.room.broadcastState();
+      }
     }
     return;
   }

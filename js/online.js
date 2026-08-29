@@ -59,6 +59,7 @@
     exiting: false, layerEl: null,
     pillEl: null, pillTimer: null, deadlineTs: 0, _hapticWarned: false,
     inviteInfo: null,
+    targetHands: 7, teamAssignMode: 'random',
 
     playerId: function () {
       try {
@@ -210,9 +211,9 @@
         '  <b>' + m.code + '</b><span class="tap-hint">\u0628\u0631\u0627\u06cc \u06a9\u067e\u06cc \u0628\u0632\u0646</span></div>' +
         '<div class="copy-row inv-link mono" data-copy="' + (m.tgUrl || '') + '" data-action="copy">' +
         '  <span class="lbl">\u0644\u06cc\u0646\u06a9 \u062f\u0639\u0648\u062a (\u062a\u0644\u06af\u0631\u0627\u0645)</span>' +
-        '  <span class="val">t.me/' + String(m.tgUrl || '').split('t.me/')[1] + '</span></div>' +
+        '  <span class="val">' + (m.tgUrl ? 't.me/' + String(m.tgUrl).split('t.me/')[1] : '') + '</span></div>' +
         '<div class="row-btns">' +
-        '  <button class="btn gold grow" data-action="share-tg">\u0641\u0631\u0633\u062a\u0627\u062f\u0646 \u062f\u0631 \u0686\u062a</button>' +
+        '  <button class="btn text-gold grow" data-action="share-tg">\u0641\u0631\u0633\u062a\u0627\u062f\u0646 \u062f\u0631 \u0686\u062a</button>' +
         '  <button class="btn ghost" data-action="close-sheet">\u0628\u0633\u062a\u0646</button></div>');
       // store for share button
       this._inviteUrl = m.tgUrl || '';
@@ -259,7 +260,8 @@
     create: function (mode) {
       const self = this;
       this.ensureNet().then(function () {
-        self.net.send({ type: 'create', mode: mode, playerId: self.playerId(), name: self.name(), initData: self.authData() });
+        self.net.send({ type: 'create', mode: mode, playerId: self.playerId(), name: self.name(), initData: self.authData(),
+          targetHands: self.targetHands, teamAssignMode: self.teamAssignMode });
       });
     },
     joinByCode: function (code) {
@@ -311,9 +313,26 @@
       },
       'back-menu': function () { Online.leaveLobby(); },
       'start': function () { Online.net.send({ type: 'start' }); },
+      'set-target': function (btn) {
+        const v = Number(btn.getAttribute('data-val'));
+        if (v === 3 || v === 5 || v === 7) {
+          Online.targetHands = v;
+          Online.net.send({ type: 'setTargetHands', targetHands: v, playerId: Online.playerId(), initData: Online.authData() });
+          // update UI
+          document.querySelectorAll('[data-action="set-target"]').forEach(function (b) { b.classList.toggle('sel', Number(b.getAttribute('data-val')) === v); });
+        }
+      },
+      'set-team-assign': function (btn) {
+        const v = btn.getAttribute('data-val');
+        if (v === 'random' || v === 'manual') {
+          Online.teamAssignMode = v;
+          Online.net.send({ type: 'setTeamAssign', mode: v, playerId: Online.playerId(), initData: Online.authData() });
+          document.querySelectorAll('[data-action="set-team-assign"]').forEach(function (b) { b.classList.toggle('sel', b.getAttribute('data-val') === v); });
+        }
+      },
       'invite': function () {
         const code = Online.code;
-        copyText('https://t.me/' + (root.__TG_BOT || 'Echohokmbot') + '?start=room_' + code, '\u0644\u06cc\u0646\u06a9 \u062f\u0639\u0648\u062a \u06a9\u067e\u06cc \u0634\u062f');
+        copyText('https://t.me/' + (root.__TG_BOT || 'Echohokmbot') + '?startapp=' + code, '\u0644\u06cc\u0646\u06a9 \u062f\u0639\u0648\u062a \u06a9\u067e\u06cc \u0634\u062f');
         Online.net.send({ type: 'invite', code: code }); // refresh canonical links server-side
       },
       'copy': function (elm) {
@@ -351,8 +370,8 @@
         '<h1 class="lobby-title">\u0628\u0627\u0632\u06cc \u0622\u0646\u0644\u0627\u06cc\u0646</h1>' +
         '<p class="lobby-sub">اتاق بساز یا با کد ملحق شو</p>' +
         '<div class="lobby-actions">' +
-        '  <button class="btn gold wide" data-action="create-2p">\u0633\u0627\u062e\u062a \u0628\u0627\u0632\u06cc 2 \u0646\u0641\u0631\u0647</button>' +
-        '  <button class="btn gold wide" data-action="create-4p">\u0633\u0627\u062e\u062a \u0628\u0627\u0632\u06cc 4 \u0646\u0641\u0631\u0647</button>' +
+        '  <button class="btn text-gold wide" data-action="create-2p">\u0633\u0627\u062e\u062a \u0628\u0627\u0632\u06cc 2 \u0646\u0641\u0631\u0647</button>' +
+          '  <button class="btn text-gold wide" data-action="create-4p">\u0633\u0627\u062e\u062a \u0628\u0627\u0632\u06cc 4 \u0646\u0641\u0631\u0647</button>' +
         '</div>' +
         '<div class="lobby-join">' +
         '  <input id="lob-code" class="code-in" maxlength="6" placeholder="\u06a9\u062f \u0627\u062a\u0627\u0642" autocomplete="off" autocapitalize="characters" />' +
@@ -370,6 +389,10 @@
       if (!this.lobbyEl) this.renderLobbyShell();
       if (this._lobbyKey !== key) {
         this._lobbyKey = key;
+        const th = snap.targetHands || 7;
+        const tam = snap.teamAssignMode || 'random';
+        this.targetHands = th;
+        this.teamAssignMode = tam;
         const box = this.lobbyEl.querySelector('#lob-room');
         box.innerHTML =
           '<div class="lobby-room">' +
@@ -379,13 +402,40 @@
           '    <span class="rc-hint">\u0628\u0632\u0646 \u062a\u0627 \u06a9\u067e\u06cc \u0634\u0647</span>' +
           '  </div>' +
           '  <div class="share-row">' +
-          '    <button class="btn gold grow" data-action="invite">\u062f\u0639\u0648\u062a \u062f\u0648\u0633\u062a</button>' +
-          '    <button class="btn ghost grow" data-action="copy" data-copy="' + location.origin + location.pathname + '?room=' + snap.code + '">\u06a9\u067e\u06cc \u0644\u06cc\u0646\u06a9 \u0648\u0628</button>' +
+          '    <button class="btn text-gold grow" data-action="invite">\u062f\u0639\u0648\u062a \u062f\u0648\u0633\u062a</button>' +
+          '    <button class="btn ghost grow" data-action="copy" data-copy="https://t.me/' + (root.__TG_BOT || 'Echohokmbot') + '?startapp=' + snap.code + '">\u06a9\u067e\u06cc \u0644\u06cc\u0646\u06a9 \u062a\u0644\u06af\u0631\u0627\u0645</button>' +
+          '  </div>' +
+          '  <div class="lobby-opts" id="lob-opts">' +
+          '    <div class="opt-row">' +
+          '      <span class="opt-lbl">\u062a\u0639\u062f\u0627\u062f \u062f\u0633\u062a</span>' +
+          '      <div class="opt-btns">' +
+          '        <button class="opt-btn' + (th === 3 ? ' sel' : '') + '" data-action="set-target" data-val="3">3</button>' +
+          '        <button class="opt-btn' + (th === 5 ? ' sel' : '') + '" data-action="set-target" data-val="5">5</button>' +
+          '        <button class="opt-btn' + (th === 7 ? ' sel' : '') + '" data-action="set-target" data-val="7">7</button>' +
+          '      </div></div>' +
+          (snap.mode === 4 ? '    <div class="opt-row">' +
+          '      <span class="opt-lbl">\u062a\u06cc\u0645 \u0628\u0646\u062f\u06cc</span>' +
+          '      <div class="opt-btns">' +
+          '        <button class="opt-btn' + (tam === 'random' ? ' sel' : '') + '" data-action="set-team-assign" data-val="random">\u062a\u0635\u0627\u062f\u0641\u06cc</button>' +
+          '        <button class="opt-btn' + (tam === 'manual' ? ' sel' : '') + '" data-action="set-team-assign" data-val="manual">\u062f\u0633\u062a\u06cc</button>' +
+          '      </div></div>' : '') +
           '  </div>' +
           '  <div class="slots" id="lob-slots"></div>' +
           '  <div id="lob-cta"></div>' +
           '</div>';
         this._slotSig = '';
+      }
+      // update options if they changed
+      var optsEl = this.lobbyEl.querySelector('#lob-opts');
+      if (optsEl) {
+        var newTh = snap.targetHands || 7;
+        var newTam = snap.teamAssignMode || 'random';
+        if (this.targetHands !== newTh || this.teamAssignMode !== newTam) {
+          this.targetHands = newTh;
+          this.teamAssignMode = newTam;
+          optsEl.querySelectorAll('[data-action="set-target"]').forEach(function (b) { b.classList.toggle('sel', Number(b.getAttribute('data-val')) === newTh); });
+          optsEl.querySelectorAll('[data-action="set-team-assign"]').forEach(function (b) { b.classList.toggle('sel', b.getAttribute('data-val') === newTam); });
+        }
       }
       // slots patch (only when changed)
       let sigStr = '', html = '';
@@ -410,10 +460,9 @@
       const cta = this.lobbyEl.querySelector('#lob-cta');
       if (cta && cta.dataset.sig !== ctaSig) {
         cta.dataset.sig = ctaSig;
-        if (full) cta.innerHTML = '<button class="btn gold wide" data-action="start">\u0634\u0631\u0648\u0639 \u0628\u0627\u0632\u06cc</button>';
+        if (full) cta.innerHTML = '<button class="btn text-gold wide" data-action="start">\u0634\u0631\u0648\u0639 \u0628\u0627\u0632\u06cc</button>';
         else cta.innerHTML =
-          (this.isHost ? '<button class="btn emerald wide" data-action="start">\u0634\u0631\u0648\u0639 \u0628\u0627 \u0631\u0628\u0627\u062a\u200f\u0647\u0627</button>' : '') +
-          '<div class="lobby-wait">\u062f\u0631 \u0627\u0646\u062a\u0638\u0627\u0631 \u0628\u0627\u0632\u06cc\u06a9\u0646\u2026 \u0644\u06cc\u0646\u06a9 \u062f\u0639\u0648\u062a \u0631\u0627 \u0628\u0641\u0631\u0633\u062a</div>';
+          (this.isHost ? '<button class="btn emerald wide" data-action="start">\u0634\u0631\u0648\u0639 \u0628\u0627 \u0631\u0628\u0627\u062a\u200f\u0647\u0627</button>' : '<div class="lobby-wait">\u062f\u0631 \u0627\u0646\u062a\u0638\u0627\u0631 \u0628\u0627\u0632\u06cc\u06a9\u0646\u2026 \u0644\u06cc\u0646\u06a9 \u062f\u0639\u0648\u062a \u0631\u0627 \u0628\u0641\u0631\u0633\u062a</div>');
       }
     },
 

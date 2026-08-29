@@ -14,7 +14,7 @@
   }
 
   function rankLabel(r) {
-    return RANK_LABEL[r] || faNum(r);
+    return RANK_LABEL[r] || String(r);
   }
 
   function makeDeck() {

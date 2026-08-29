@@ -54,6 +54,8 @@ class Room {
     this.logs = [];
     this.feed = [];
     this._lastActive = opts.clock ? opts.clock.now() : Date.now();
+    this.targetHands = 7;
+    this.teamAssignMode = 'random'; // 'random' | 'manual'
   }
 
   // ----- transport helpers -----
@@ -98,6 +100,8 @@ class Room {
       state: this.state,
       creatorId: this.creatorId,
       _lastActive: this._lastActive,
+      targetHands: this.targetHands,
+      teamAssignMode: this.teamAssignMode,
       seats: this.seats.map(function (s) {
         if (!s) return null;
         return {
@@ -114,6 +118,8 @@ class Room {
     this.state = d.state || 'lobby';
     this.creatorId = d.creatorId || null;
     this._lastActive = d._lastActive || this.clock.now();
+    this.targetHands = d.targetHands || 7;
+    this.teamAssignMode = d.teamAssignMode || 'random';
     this.seats = (d.seats || []).map(function (s) {
       if (!s) return null;
       return {
@@ -273,15 +279,31 @@ class Room {
         };
       }
     }
+    // team assignment for 4-player mode (only when multiple humans)
+    if (this.mode === 4 && this.teamAssignMode === 'random') {
+      const humanCount = this.seats.filter(function (s) { return s && !s.isBot; }).length;
+      if (humanCount >= 2) {
+        // shuffle seat positions to randomize team pairs
+        for (let i = this.seats.length - 1; i > 0; i--) {
+          const j = Math.floor(this.clock.random() * (i + 1));
+          const tmp = this.seats[i]; this.seats[i] = this.seats[j]; this.seats[j] = tmp;
+        }
+        // reassign sides based on new positions
+        for (let i = 0; i < this.seats.length; i++) {
+          if (this.seats[i]) this.seats[i].side = this.sideOf(i);
+        }
+        this.addLog('تیم‌ها تصادفی تعیین شدند');
+      }
+    }
     for (const t of this.reconnectTimers.values()) this.clock.clearTimeout(t);
     this.reconnectTimers.clear();
     const seed = (this.clock.random() * 0xffffffff) >>> 0;
-    this.engine = new Engine(this.mode, seed);
+    this.engine = new Engine(this.mode, seed, { targetPoints: this.targetHands });
     this.engine.newMatch();
     this.state = 'playing';
     this.lastTrick = null;
     this.touch();
-    this.addLog('بازی شروع شد — ' + this.mode + ' نفره');
+    this.addLog('بازی شروع شد — ' + this.mode + ' نفره — تا ' + this.targetHands + ' امتیاز');
     this.broadcastState();
     this._psave();
     this.advance();
@@ -487,7 +509,8 @@ class Room {
       lastWinner: this.lastWinner,
       scores: e ? e.scores.slice() : [0, 0],
       handNo: e ? e.handNo : 0,
-      target: globalThis.HOKM_TARGET_POINTS,
+      target: this.targetHands,
+      teamAssignMode: this.teamAssignMode,
       yourTurn: false,
       prompt: null,
       hand: null,

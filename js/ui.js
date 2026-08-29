@@ -360,7 +360,7 @@
       const c = (n - 1) / 2;
       cards.forEach(function (node, i) {
         const off = i - c;
-        const x = i * step;
+        const x = off * step;
         const y = Math.pow(Math.abs(off), 1.55) * 2.4;
         const rot = Math.max(-14, Math.min(14, off * 3.2));
         node.style.setProperty('--tx', x.toFixed(1) + 'px');
@@ -719,7 +719,7 @@
         const msg = el('div', 'dock-msg', count === 3
           ? '۳ کارت بی‌ارزش را انتخاب کن'
           : '۲ کارت بی‌ارزش را انتخاب کن');
-        btn = el('button', 'btn gold', 'دور بریز (۰/' + UI.fa(count) + ')');
+        btn = el('button', 'btn text-gold', 'دور بریز (۰/' + UI.fa(count) + ')');
         btn.disabled = true;
         btn.addEventListener('click', function () {
           const ids = self.selectedDiscardIds();
@@ -745,7 +745,7 @@
           '<div class="di-row"><span class="di-k">دست تو</span><b>' + UI.fa(ctxInfo.myHand) + '</b></div>' +
           '<div class="di-row"><span class="di-k">نیاز</span><b>' + UI.fa(ctxInfo.need) + '</b></div>');
         const btns = el('div', 'draw-btns');
-        const keep = el('button', 'btn gold', 'نگه می‌دارم');
+        const keep = el('button', 'btn text-gold', 'نگه می‌دارم');
         const drop = el('button', 'btn ghost', 'رد می‌کنم');
         const hint = el('div', 'draw-hint', 'اگر رد کنی، دومی اجباری است');
         btns.appendChild(drop);
@@ -834,7 +834,7 @@
           '<div class="score-line"><span class="sl-us">' + UI.fa(view.tricksUs) + '</span><span class="sl-dash">—</span><span class="sl-them">' + UI.fa(view.tricksThem) + '</span></div>' +
           '<div class="pts-delta ' + (view.won ? 'up' : '') + '">+' + UI.fa(view.ptsDelta) + ' امتیاز به ' + (view.won ? 'شما' : 'حریف') + '</div>' +
           '<div class="match-score">' + view.usName + ' <b>' + UI.fa(view.scoreUs) + '</b> · حریف <b>' + UI.fa(view.scoreThem) + '</b></div>' +
-          '<button class="btn gold wide" id="ov-go">' + (view.matchOver ? 'پایان بازی' : 'دست بعدی') + '</button>');
+          '<button class="btn text-gold wide" id="ov-go">' + (view.matchOver ? 'پایان بازی' : 'دست بعدی') + '</button>');
         o.panel.querySelector('#ov-go').addEventListener('click', function () {
           root.HokmSound.play('click');
           o.ov.classList.add('out');
@@ -862,7 +862,7 @@
           '<div class="score-line xl"><span class="sl-us">' + UI.fa(view.scoreUs) + '</span><span class="sl-dash">—</span><span class="sl-them">' + UI.fa(view.scoreThem) + '</span></div>' +
           '<div class="match-score">' + view.usName + ' در برابر حریف</div>' +
           '<div class="final-btns">' +
-          '<button class="btn gold wide" id="ov-again">بازی دوباره</button>' +
+          '<button class="btn text-gold wide" id="ov-again">بازی دوباره</button>' +
           '<button class="btn ghost wide" id="ov-menu">بازگشت به منو</button>' +
           '</div>');
         if (view.won) {
@@ -921,7 +921,7 @@
         '<button class="tab" data-t="two">دونفره</button>' +
         '<button class="tab" data-t="score">امتیازها</button></div>' +
         '<div class="tab-body" id="tab-body">' + tabs.four + '</div>' +
-        '<button class="btn gold wide" id="rl-close">فهمیدم</button>');
+        '<button class="btn text-gold wide" id="rl-close">فهمیدم</button>');
       const body = o.panel.querySelector('#tab-body');
       o.panel.querySelectorAll('.tab').forEach(function (t) {
         t.addEventListener('click', function () {
@@ -940,7 +940,7 @@
         '<h2>تنظیمات</h2>' +
         '<label class="set-row">صدا<input type="checkbox" id="st-snd" ' + (prefs.sound ? 'checked' : '') + '><i class="sw"></i></label>' +
         '<label class="set-row">سرعت بازی<input type="checkbox" id="st-spd" ' + (prefs.fast ? 'checked' : '') + '><i class="sw"></i></label>' +
-        '<button class="btn gold wide" id="st-ok">ذخیره</button>');
+        '<button class="btn text-gold wide" id="st-ok">ذخیره</button>');
       o.panel.querySelector('#st-ok').addEventListener('click', function () {
         onSave({
           sound: o.panel.querySelector('#st-snd').checked,

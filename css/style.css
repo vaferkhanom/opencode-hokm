@@ -15,7 +15,7 @@
   --back-navy: #16213e;
   --danger: #ff5d5d;
   --good: #57d9a3;
-  --cw: clamp(50px, 13vw, 72px);
+  --cw: clamp(56px, 15vw, 80px);
   --ch: calc(var(--cw) * 1.42);
   --vhh: 100dvh;
   --sat: env(safe-area-inset-top, 0px);
@@ -103,7 +103,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outl
 }
 .btn:active { transform: scale(.95); filter: brightness(.92); }
 .btn .bs { font-size: 11.5px; font-weight: 600; opacity: .75; }
-.btn.gold::after {
+.btn.text-gold::after {
   content: ''; position: absolute; inset: 0; border-radius: inherit;
   background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,.55) 50%, transparent 65%);
   background-size: 250% 100%;
@@ -425,8 +425,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outl
 .cor { position: absolute; display: flex; flex-direction: column; align-items: center; line-height: 1; gap: 1px; }
 .cor.tr { top: 5px; right: 5px; }
 .cor.bl { bottom: 5px; left: 5px; transform: rotate(180deg); }
-.cor b { font-size: calc(var(--cw) * .21); font-weight: 900; }
-.cor i { font-style: normal; font-size: calc(var(--cw) * .17); }
+.cor b { font-size: calc(var(--cw) * .26); font-weight: 900; }
+.cor i { font-style: normal; font-size: calc(var(--cw) * .21); }
 .pip {
   position: absolute; left: 50%; top: 54%;
   transform: translate(-50%, -50%);
@@ -783,8 +783,20 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outl
 /* generic "card" panel removed to avoid colliding with .card playing cards */
 .tile { background:#0c1322; border:1px solid #25324a; border-radius:16px; padding:14px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing:1px; }
-.gold { color:#e9c46a; }
+.text-gold { color:#e9c46a; }
 .grow { flex:1 1 auto; }
+
+.lobby-opts { display:flex; flex-direction:column; gap:8px; margin:12px 0; }
+.opt-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.opt-lbl { color:#8fa0b8; font-size:13px; white-space:nowrap; }
+.opt-btns { display:flex; gap:6px; }
+.opt-btn {
+  background:#101a2e; border:1px solid #3c5178; border-radius:10px;
+  padding:6px 14px; color:#c0cfdf; font-size:13px; font-weight:600;
+  cursor:pointer; transition:all .15s; user-select:none;
+}
+.opt-btn:active { transform:scale(.95); }
+.opt-btn.sel { background:#1a3050; border-color:#e9c46a; color:#e9c46a; }
 
 .room-code-head { display:flex; flex-direction:column; align-items:center; gap:4px; margin-bottom:10px; }
 .room-code-head .lbl { color:#8fa0b8; font-size:12px; }

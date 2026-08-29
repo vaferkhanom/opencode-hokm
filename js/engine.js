@@ -6,7 +6,7 @@
   const TARGET_POINTS = 7;
   const TRICKS_TO_WIN = 7;
 
-  function Engine(mode, seed) {
+  function Engine(mode, seed, opts) {
     this.mode = mode;
     this.n = mode;
     this.rngSeed = seed != null ? seed : ((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0);
@@ -16,6 +16,9 @@
     this.roles = null;
     this.matchOver = false;
     this.matchWinner = -1;
+    opts = opts || {};
+    this.targetPoints = opts.targetPoints || TARGET_POINTS;
+    this.tricksToWin = opts.tricksToWin || TRICKS_TO_WIN;
     this._clearHand();
   }
 
@@ -270,7 +273,7 @@
       this.trick = [];
       this.leader = winner;
       this.turn = winner;
-      if (this.tricksWon[side] >= TRICKS_TO_WIN) {
+      if (this.tricksWon[side] >= this.tricksToWin) {
         this._finishHand(side);
       }
     } else {
@@ -340,7 +343,7 @@
       kot: kot,
       hakemKot: hakemKot
     };
-    if (this.scores[winSide] >= TARGET_POINTS) {
+    if (this.scores[winSide] >= this.targetPoints) {
       this.matchOver = true;
       this.matchWinner = winSide;
     }
@@ -398,7 +401,8 @@
       lastTrickResult: this.lastTrickResult, discardPile: this.discardPile, drawState: this.drawState,
       pendingRoles: this.pendingRoles, handResult: this.handResult, ceremony: this.ceremony,
       firstFive: this.firstFive, dealOrder: this.dealOrder, restDeck: this.restDeck,
-      discardNeed: this.discardNeed, playedHistory: this.playedHistory
+      discardNeed: this.discardNeed, playedHistory: this.playedHistory,
+      targetPoints: this.targetPoints, tricksToWin: this.tricksToWin
     };
   };
 
@@ -411,6 +415,8 @@
     this.roles = d.roles || null;
     this.matchOver = !!d.matchOver;
     this.matchWinner = d.matchWinner != null ? d.matchWinner : -1;
+    this.targetPoints = d.targetPoints || TARGET_POINTS;
+    this.tricksToWin = d.tricksToWin || TRICKS_TO_WIN;
     this.hands = d.hands || [];
     this.stock = d.stock || [];
     this.trick = d.trick || [];

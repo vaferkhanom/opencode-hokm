@@ -107,7 +107,7 @@ function waitFor(st, pred, ms) {
   send(c1, { type: 'invite' });
   await waitFor(c1, () => c1.invites.length > 0, 4000);
   const inv = c1.invites[0];
-  assert.ok(inv.tgUrl && inv.tgUrl.startsWith('https://t.me/') && inv.tgUrl.includes('start=room_' + code2), 'Telegram Mini App deep link');
+  assert.ok(inv.tgUrl && inv.tgUrl.startsWith('https://t.me/') && inv.tgUrl.includes('startapp=' + code2), 'Telegram Mini App deep link');
   assert.ok(inv.webUrl && inv.webUrl.includes('?room=' + code2), 'web fallback link');
   ok('e2e: invite link is a valid t.me Mini App URL + web URL');
 
