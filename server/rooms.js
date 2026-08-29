@@ -611,6 +611,13 @@ class Rooms {
       // nobody seated at all -> the room is dead weight, drop it now
       if (!room.seats.some(function (s) { return !!s; })) { this.map.delete(code); continue; }
       const anyConnected = room.seats.some(function (s) { return s && s.connected; });
+      // Match finished and everyone left: clean up after 5 minutes so the
+      // room code stops being joinable.  Players still in the room (for
+      // "بازی دوباره") keep it alive via their connected sockets.
+      if (room.state === 'matchOver' && !anyConnected) {
+        if (now - (room._lastActive || now) > 300000) this.map.delete(code);
+        continue;
+      }
       if (!anyConnected && now - (room._lastActive || now) > 3600000) this.map.delete(code);
     }
   }

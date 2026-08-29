@@ -270,6 +270,7 @@
     },
     leaveLobby: function () {
       if (this.net) this.net.send({ type: 'leave' });
+      try { localStorage.removeItem('hokm-lastcode'); } catch (e) {}
       if (App) App.toMenu();
       this.teardown(true);
     },
@@ -284,6 +285,7 @@
     doExit: function (sendLeave) {
       this.exiting = true;
       if (sendLeave && this.net && this.net.isLive()) this.net.send({ type: 'leave' });
+      try { localStorage.removeItem('hokm-lastcode'); } catch (e) {}
       if (App) App.toMenu();
       this.teardown(true);
       setTimeout(function () { window.__hokmExitDone = true; }, 0);
@@ -293,7 +295,7 @@
       this.hideLayer();
       if (hard && this.net) this.net.destroy();
       else if (this.net && this.net.ws) { try { this.net.ws.close(); } catch (e) {} }
-      if (hard) this.net = null;
+      if (hard) { this.net = null; try { localStorage.removeItem('hokm-lastcode'); } catch (e) {} }
       this.code = null; this.seat = -1; this.isHost = false;
       this.built = false; this.lobbyEl = null; this._lobbyKey = null;
       this.lastHandSig = null; this.lastTrickSig = null;
