@@ -116,9 +116,58 @@ async function init() {
 }
 
 async function migrate() {
-  const stmts = SCHEMA.split(';').map(s => s.trim()).filter(Boolean);
-  for (const st of stmts) {
-    await driver.query(st, []);
+  // Create the tables only if they don't already exist. The user may have
+  // pre-created `users` / `rooms` (or a previous deploy did), so we never drop
+  // or truncate — we just make sure every column this build reads/writes exists.
+  await driver.query(`CREATE TABLE IF NOT EXISTS users (
+    tg_id BIGINT PRIMARY KEY,
+    first_name TEXT NOT NULL DEFAULT '',
+    last_name TEXT NOT NULL DEFAULT '',
+    username TEXT NOT NULL DEFAULT '',
+    lang TEXT NOT NULL DEFAULT '',
+    games INT NOT NULL DEFAULT 0,
+    wins INT NOT NULL DEFAULT 0,
+    kot INT NOT NULL DEFAULT 0,
+    room_code TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await driver.query(`CREATE TABLE IF NOT EXISTS rooms (
+    code TEXT PRIMARY KEY,
+    mode INT NOT NULL,
+    state TEXT NOT NULL,
+    data JSONB NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now()
+  )`);
+
+  // Backfill any columns an existing table might be missing so the
+  // INSERT / UPDATE / SELECT statements below always succeed. Existing
+  // columns (and any extra columns the table already has) are left untouched.
+  const userCols = [
+    'first_name TEXT NOT NULL DEFAULT \'\'',
+    'last_name TEXT NOT NULL DEFAULT \'\'',
+    'username TEXT NOT NULL DEFAULT \'\'',
+    'lang TEXT NOT NULL DEFAULT \'\'',
+    'games INT NOT NULL DEFAULT 0',
+    'wins INT NOT NULL DEFAULT 0',
+    'kot INT NOT NULL DEFAULT 0',
+    'room_code TEXT',
+    'created_at TIMESTAMPTZ NOT NULL DEFAULT now()',
+    'last_seen TIMESTAMPTZ NOT NULL DEFAULT now()'
+  ];
+  for (const col of userCols) {
+    const name = col.split(' ')[0];
+    await driver.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ${name} ${col.slice(name.length + 1)}`);
+  }
+  const roomCols = [
+    'mode INT NOT NULL',
+    'state TEXT NOT NULL',
+    'data JSONB NOT NULL',
+    'updated_at TIMESTAMPTZ DEFAULT now()'
+  ];
+  for (const col of roomCols) {
+    const name = col.split(' ')[0];
+    await driver.query(`ALTER TABLE rooms ADD COLUMN IF NOT EXISTS ${name} ${col.slice(name.length + 1)}`);
   }
 }
 
