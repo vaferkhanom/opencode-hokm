@@ -14,6 +14,7 @@ let CFG = {};
 try { CFG = require('./server/config.production.json'); } catch (e) {}
 const BOT_TOKEN = process.env.BOT_TOKEN || CFG.botToken || '';
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || CFG.webhookSecret || ('whsec-' + crypto.randomBytes(12).toString('hex'));
+const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
 
 const rooms = new Rooms();
 rooms.onMatchOver = function (payload) {
@@ -100,6 +101,29 @@ const server = http.createServer(function (req, res) {
   if (urlPath === '/healthz') {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('ok');
+  }
+  // Admin: force-delete a stuck room
+  if (urlPath === '/admin/delete-room' && req.method === 'POST' && ADMIN_SECRET) {
+    readBody(req, 8192, function (buf) {
+      if (!buf) { res.writeHead(400); return res.end('bad body'); }
+      let body;
+      try { body = JSON.parse(buf.toString()); } catch (e) { res.writeHead(400); return res.end('bad json'); }
+      if (body.secret !== ADMIN_SECRET) { res.writeHead(403); return res.end('forbidden'); }
+      const code = String(body.code || '').toUpperCase();
+      const room = rooms.get(code);
+      if (!room) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, deleted: false })); }
+      // Disconnect all connected WebSocket clients in the room
+      room.seats.forEach(function (s) {
+        if (s && s.ws) {
+          try { s.ws.room = null; s.ws.close(); } catch (e) {}
+        }
+      });
+      rooms.map.delete(code);
+      store.deleteRoom(code).catch(function () {});
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, deleted: code }));
+    });
+    return;
   }
   // Telegram webhook
   if (bot && urlPath === '/tg/webhook') {

@@ -550,7 +550,18 @@
       UI.renderHand(snap.hand, [], false, null);
     },
     handlePrompt: function (snap) {
-      if (!snap.yourTurn) { this.awaiting = false; this.promptKind = null; return; }
+      if (!snap.yourTurn) {
+        // Server advanced past our turn (timeout/bot act). Clear stale
+        // prompt state so the hand re-renders as non-interactive on the
+        // next state update, even if a UI promise is still pending.
+        if (this.awaiting) {
+          this.awaiting = false;
+          this.promptKind = null;
+          // Force re-render of hand as non-interactive
+          if (snap.hand) UI.renderHand(snap.hand, [], false, null);
+        }
+        return;
+      }
       const self = this;
       const p = snap.prompt;
       if (this.awaiting) return;

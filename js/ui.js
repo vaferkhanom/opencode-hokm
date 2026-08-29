@@ -61,7 +61,6 @@
         c.innerHTML =
           '<div class="cor tr"><b>' + lab + '</b><i>' + sym + '</i></div>' +
           '<div class="pip">' + sym + '</div>' +
-          '<div class="pip small">' + lab + '</div>' +
           '<div class="cor bl"><b>' + lab + '</b><i>' + sym + '</i></div>';
         if (card.rank === 14 || card.rank === 13) c.classList.add('royal');
       }

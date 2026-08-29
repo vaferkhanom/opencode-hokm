@@ -103,6 +103,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outl
 }
 .btn:active { transform: scale(.95); filter: brightness(.92); }
 .btn .bs { font-size: 11.5px; font-weight: 600; opacity: .75; }
+.btn.text-gold { color: #241a05; }
 .btn.text-gold::after {
   content: ''; position: absolute; inset: 0; border-radius: inherit;
   background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,.55) 50%, transparent 65%);
@@ -423,8 +424,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outl
 .card.red { color: var(--red-suit); }
 .card.blk { color: var(--ink); }
 .cor { position: absolute; display: flex; flex-direction: column; align-items: center; line-height: 1; gap: 1px; }
-.cor.tr { top: 5px; right: 5px; }
-.cor.bl { bottom: 5px; left: 5px; transform: rotate(180deg); }
+.cor.tr { top: 5px; left: 5px; }
+.cor.bl { bottom: 5px; right: 5px; transform: rotate(180deg); }
 .cor b { font-size: calc(var(--cw) * .26); font-weight: 900; }
 .cor i { font-style: normal; font-size: calc(var(--cw) * .21); }
 .pip {
@@ -432,11 +433,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outl
   transform: translate(-50%, -50%);
   font-size: calc(var(--cw) * .58); line-height: 1;
   opacity: .92;
-}
-.pip.small {
-  top: auto; bottom: 6%; left: 50%;
-  transform: translateX(-50%) rotate(180deg);
-  font-size: calc(var(--cw) * .2); font-weight: 900; opacity: .8;
 }
 
 .card.is-back {
