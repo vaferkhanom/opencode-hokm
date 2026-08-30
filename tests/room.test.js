@@ -243,6 +243,9 @@ function ok(name) { passed++; console.log('  ok -', name); }
   r.seats[1] = mkHuman('pA', 'A', 1, r);
   r.seats[3] = mkHuman('pB', 'B', 3, r);
   r.creatorId = 'h';
+  // This test asserts on fixed seat indices; disable the random team
+  // shuffle so seat positions stay exactly as set up above.
+  r.teamAssignMode = 'manual';
   r.start('h');
   let guard = 0;
   for (;;) {
@@ -323,6 +326,67 @@ function ok(name) { passed++; console.log('  ok -', name); }
   assert.strictEqual(rooms.get(dead.code), undefined, 'empty room pruned right away');
   assert.ok(rooms.get(alive.code), 'occupied room survives');
   ok('prune drops emptied rooms, keeps occupied ones');
+})();
+
+// Test 14: server restart mid-discard and mid-draw must NOT corrupt the room
+// (regression: discardedFlags/drawState used to be lost on restore, making
+// advance() throw and crash-loop the process -> room stuck forever)
+(function () {
+  // --- mid-discard snapshot ---
+  let clock = makeClock();
+  let rooms = new Rooms(clock);
+  let r = rooms.create(2, 'p0', 'Ali', null).room;
+  r.seats[0] = mkHuman('p0', 'Ali', 0, r);
+  r.seats[1] = mkBot(1, r);
+  r.creatorId = 'p0';
+  r.start('p0');
+  let guard = 0;
+  while (guard++ < 3000) {
+    const e = r.engine;
+    if (e && e.phase === 'discard2p' && e.discardedFlags[0] !== e.discardedFlags[1]) break;
+    if (!humanDrive(r, 0)) clock.step(200);
+  }
+  const snapDiscard = r.serialize();
+  assert.strictEqual(snapDiscard.engine.phase, 'discard2p', 'snapshot taken mid-discard');
+  assert.ok(snapDiscard.engine.discardedFlags, 'discardedFlags serialized');
+
+  let rooms2 = new Rooms(makeClock());
+  let restored = rooms2.loadFrom([snapDiscard]).get(snapDiscard.code);
+  restored.advance(); // must not throw
+  guard = 0;
+  while (restored.state !== 'matchOver' && guard++ < 20000) {
+    if (!humanDrive(restored, 0)) restored.clock.step(1000);
+  }
+  assert.strictEqual(restored.state, 'matchOver', 'restored mid-discard room completes');
+  ok('restart mid-discard restores discardedFlags and completes');
+
+  // --- mid-draw snapshot ---
+  clock = makeClock();
+  rooms = new Rooms(clock);
+  r = rooms.create(2, 'p0', 'Ali', null).room;
+  r.seats[0] = mkHuman('p0', 'Ali', 0, r);
+  r.seats[1] = mkBot(1, r);
+  r.creatorId = 'p0';
+  r.start('p0');
+  guard = 0;
+  while (guard++ < 3000) {
+    const e = r.engine;
+    if (e && e.phase === 'draw2p' && e.stock && e.stock.length > 2) break;
+    if (!humanDrive(r, 0)) clock.step(200);
+  }
+  const snapDraw = r.serialize();
+  assert.strictEqual(snapDraw.engine.phase, 'draw2p', 'snapshot taken mid-draw');
+  assert.ok(snapDraw.engine.drawState, 'drawState serialized');
+
+  rooms2 = new Rooms(makeClock());
+  restored = rooms2.loadFrom([snapDraw]).get(snapDraw.code);
+  restored.advance(); // must not throw
+  guard = 0;
+  while (restored.state !== 'matchOver' && guard++ < 20000) {
+    if (!humanDrive(restored, 0)) restored.clock.step(1000);
+  }
+  assert.strictEqual(restored.state, 'matchOver', 'restored mid-draw room completes');
+  ok('restart mid-draw restores drawState and completes');
 })();
 
 console.log('\nAll ' + passed + ' room tests passed.');

@@ -112,11 +112,12 @@ const server = http.createServer(function (req, res) {
       const code = String(body.code || '').toUpperCase();
       const room = rooms.get(code);
       if (!room) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, deleted: false })); }
-      // Disconnect all connected WebSocket clients in the room
+      // Disconnect all connected WebSocket clients in the room and release
+      // each seated account's room membership so they can join new rooms.
       room.seats.forEach(function (s) {
-        if (s && s.ws) {
-          try { s.ws.room = null; s.ws.close(); } catch (e) {}
-        }
+        if (!s) return;
+        if (s.ws) { try { s.ws.room = null; s.ws.close(); } catch (e) {} }
+        if (s.tgId) store.clearRoom(s.tgId, code).catch(function () {});
       });
       rooms.map.delete(code);
       store.deleteRoom(code).catch(function () {});

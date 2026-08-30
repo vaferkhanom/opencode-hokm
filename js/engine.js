@@ -183,11 +183,13 @@
   };
 
   Engine.prototype.drawTurn = function () {
-    return this.phase === 'draw2p' ? this.drawState.turn : -1;
+    if (this.phase !== 'draw2p' || !this.drawState) return -1;
+    return this.drawState.turn;
   };
 
   Engine.prototype.drawsLeft = function (seat) {
-    return this.phase === 'draw2p' ? this.drawState.left[seat] : 0;
+    if (this.phase !== 'draw2p' || !this.drawState) return 0;
+    return this.drawState.left[seat] || 0;
   };
 
   Engine.prototype.stockPeek = function () {
@@ -399,6 +401,7 @@
       hands: this.hands, stock: this.stock, trick: this.trick, tricksWon: this.tricksWon.slice(),
       trump: this.trump, leader: this.leader, turn: this.turn, phase: this.phase,
       lastTrickResult: this.lastTrickResult, discardPile: this.discardPile, drawState: this.drawState,
+      discardedFlags: this.discardedFlags,
       pendingRoles: this.pendingRoles, handResult: this.handResult, ceremony: this.ceremony,
       firstFive: this.firstFive, dealOrder: this.dealOrder, restDeck: this.restDeck,
       discardNeed: this.discardNeed, playedHistory: this.playedHistory,
@@ -428,6 +431,7 @@
     this.lastTrickResult = d.lastTrickResult || null;
     this.discardPile = d.discardPile || [];
     this.drawState = d.drawState || null;
+    this.discardedFlags = d.discardedFlags || { 0: false, 1: false };
     this.pendingRoles = d.pendingRoles || null;
     this.handResult = d.handResult || null;
     this.ceremony = d.ceremony || null;

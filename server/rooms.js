@@ -321,10 +321,10 @@ class Room {
         if (e.phase !== 'awaitTrump' || e.roles.hakem !== seat) return;
         e.setTrump(action.suit);
       } else if (action.type === 'discard') {
-        if (e.phase !== 'discard2p' || e.discardedFlags[seat]) return;
+        if (e.phase !== 'discard2p' || !e.discardedFlags || e.discardedFlags[seat]) return;
         e.applyDiscard2p(seat, action.ids);
       } else if (action.type === 'draw') {
-        if (e.phase !== 'draw2p' || e.drawTurn() !== seat) return;
+        if (e.phase !== 'draw2p' || !e.drawState || e.drawTurn() !== seat) return;
         e.drawDecision(!!action.keep);
       } else if (action.type === 'play') {
         if (e.phase !== 'play' || e.turn !== seat) return;
@@ -366,10 +366,15 @@ class Room {
     const ph = e.phase;
     if (ph === 'awaitTrump') return { seat: e.roles.hakem, kind: 'trump' };
     if (ph === 'discard2p') {
+      // Guard: rooms restored from old persistence may miss discardedFlags —
+      // rebuild it rather than throwing (an uncaught throw here crashed the
+      // process and permanently stuck the room).
+      if (!e.discardedFlags) e.discardedFlags = { 0: false, 1: false };
       for (const s of [0, 1]) if (!e.discardedFlags[s]) return { seat: s, kind: 'discard' };
       return null;
     }
     if (ph === 'draw2p') {
+      if (!e.drawState) { e.phase = 'play'; e.leader = e.roles.hakem; e.turn = e.leader; return { seat: e.leader, kind: 'play' }; }
       const s = e.drawTurn();
       if (s >= 0) return { seat: s, kind: 'draw' };
       return null;
@@ -446,7 +451,7 @@ class Room {
     if (this.state !== 'playing' || !this.engine) return;
     const e = this.engine;
     const still = (kind === 'trump' && e.phase === 'awaitTrump' && e.roles.hakem === seat) ||
-      (kind === 'discard' && e.phase === 'discard2p' && !e.discardedFlags[seat]) ||
+      (kind === 'discard' && e.phase === 'discard2p' && e.discardedFlags && !e.discardedFlags[seat]) ||
       (kind === 'draw' && e.phase === 'draw2p' && e.drawTurn() === seat) ||
       (kind === 'play' && e.phase === 'play' && e.turn === seat);
     if (!still) { this.clearTimers(); return; }
@@ -474,8 +479,8 @@ class Room {
     const e = this.engine;
     if (e.phase === 'awaitTrump' && e.roles.hakem === seat) {
       e.setTrump(AI.chooseTrump(e.firstFive[seat]));
-    } else if (e.phase === 'discard2p' && !e.discardedFlags[seat]) {
-      e.applyDiscard2p(seat, AI.chooseDiscards(e.hands[seat], e.discardNeed[seat], e.trump));
+    } else if (e.phase === 'discard2p' && e.discardedFlags && !e.discardedFlags[seat]) {
+      e.applyDiscard2p(seat, AI.chooseDiscards(e.hands[seat], e.discardNeed ? e.discardNeed[seat] : 2, e.trump));
     } else if (e.phase === 'draw2p' && e.drawTurn() === seat) {
       const peek = e.stockPeek();
       e.drawDecision(AI.chooseKeep(peek, e.hands[seat], e.trump));
@@ -530,8 +535,8 @@ class Room {
       const you = forSeat;
       if (ph === 'awaitTrump' && e.roles.hakem === you && !this.seatBot(you)) {
         snap.prompt = 'trump'; snap.yourTurn = true; snap.trumpFive = e.firstFive[you].slice();
-      } else if (ph === 'discard2p' && !e.discardedFlags[you] && !this.seatBot(you)) {
-        snap.prompt = 'discard'; snap.yourTurn = true; snap.discardCount = e.discardNeed[you];
+      } else if (ph === 'discard2p' && e.discardedFlags && !e.discardedFlags[you] && !this.seatBot(you)) {
+        snap.prompt = 'discard'; snap.yourTurn = true; snap.discardCount = (e.discardNeed && e.discardNeed[you]) || 2;
       } else if (ph === 'draw2p' && e.drawTurn() === you && !this.seatBot(you)) {
         snap.prompt = 'draw'; snap.yourTurn = true; snap.drawCard = e.stockPeek();
       } else if (ph === 'play' && e.turn === you && !this.seatBot(you)) {

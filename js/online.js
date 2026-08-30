@@ -117,6 +117,9 @@
           // Room missing/full: return to the lobby instead of dropping the player.
           self.code = null;
           try { localStorage.removeItem('hokm-lastcode'); } catch (e) {}
+          // The reconnect layer (shown while the rejoin was in flight) must
+          // not cover the lobby we are about to render.
+          self.hideLayer();
           setTimeout(function () { self.renderLobbyShell(); }, 600);
           return;
         }
@@ -134,6 +137,21 @@
         return;
       }
       this.showLayer('\u0627\u062a\u0635\u0627\u0644 \u0642\u0637\u0639 \u0634\u062f \u2014 \u062f\u0631 \u062d\u0627\u0644 \u0628\u0627\u0632\u06af\u0634\u062a \u0628\u0647 \u0627\u062a\u0627\u0642\u2026');
+      this.scheduleRejoin();
+    },
+    // After any drop (server restart, network blip), net.js re-opens the
+    // socket but nothing re-sent the join — the player stayed stranded on
+    // the reconnect layer forever. Queue a fresh join: net.js flushes the
+    // queue the moment the socket reopens, so this survives reconnects.
+    scheduleRejoin: function () {
+      const self = this;
+      if (!this.code || this.exiting || this._rejoinPending) return;
+      this._rejoinPending = true;
+      setTimeout(function () {
+        self._rejoinPending = false;
+        if (self.exiting || !self.code || !self.net) return;
+        self.net.send({ type: 'join', code: self.code, playerId: self.playerId(), name: self.name(), initData: self.authData() });
+      }, 1200);
     },
     showLayer: function (text) {
       const self = this;
@@ -301,6 +319,7 @@
       this.lastHandSig = null; this.lastTrickSig = null;
       this._heShown = false; this._meShown = false; this.awaiting = false;
       this.promptKind = null; this.deadlineTs = 0;
+      this._rejoinPending = false;
     },
 
     // ---------------- delegated actions ----------------
@@ -553,11 +572,13 @@
       if (!snap.yourTurn) {
         // Server advanced past our turn (timeout/bot act). Clear stale
         // prompt state so the hand re-renders as non-interactive on the
-        // next state update, even if a UI promise is still pending.
+        // next state update, and dismiss any prompt overlay (drawChoice,
+        // trump picker, discard) whose promise is still pending — otherwise
+        // it blocks the whole board while the game has moved on.
         if (this.awaiting) {
           this.awaiting = false;
           this.promptKind = null;
-          // Force re-render of hand as non-interactive
+          UI.closeModal && UI.closeModal(true);
           if (snap.hand) UI.renderHand(snap.hand, [], false, null);
         }
         return;
